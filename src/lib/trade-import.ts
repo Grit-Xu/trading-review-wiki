@@ -88,11 +88,11 @@ function normalizeDate(value: unknown): string {
   return str
 }
 
-function parseDirection(value: unknown): TradeRecord["direction"] {
+function parseDirection(value: unknown): TradeRecord["direction"] | null {
   const str = String(value ?? "").trim().toLowerCase()
-  if (["买", "买入", "b", "buy", "buyin", "多头", "多"].includes(str)) return "buy"
-  if (["卖", "卖出", "s", "sell", "sale", "sellout", "空头", "空"].includes(str)) return "sell"
-  return "buy" // fallback
+  if (["买", "买入", "b", "buy", "buyin", "多头", "多", "证券买入"].includes(str)) return "buy"
+  if (["卖", "卖出", "s", "sell", "sale", "sellout", "空头", "空", "证券卖出"].includes(str)) return "sell"
+  return null // 不再静默 fallback — 避免列错位导致统计全错
 }
 
 function parseNumber(value: unknown): number {
@@ -109,8 +109,11 @@ function isWithdrawn(row: unknown[], headers: string[]): boolean {
   const idxWithdrawQty = findHeaderIndex(headers, ["已撤数量", "撤单数量", "撤销量"])
   const idxStatus = findHeaderIndex(headers, ["状态", "成交状态", "委托状态", "撤单标志", "备注", "摘要"])
 
-  // TODO: 未来可考虑在此处过滤非交易记录（如红利发放、送转股、配股缴款、新股中签）。
-  // 不同券商摘要格式差异大，暂时由用户在导入前自行确认交割单内容。
+  // 过滤非交易流水（红利、送转股、配股缴款、新股中签、可转债转股等）
+  const summary = idxStatus !== -1 ? String(row[idxStatus] ?? "").trim() : ""
+  if (/(红利|股息|送转|送股|转增|配股|中签|新股|转债|转股|转托管|回购|质押|解冻)/.test(summary)) return true
+
+  // 撤单/废单/未成交过滤（原有逻辑保留）
 
   const dealQty = idxDealQty !== -1 ? parseNumber(row[idxDealQty]) : NaN
   const entrustQty = idxEntrustQty !== -1 ? parseNumber(row[idxEntrustQty]) : NaN
@@ -186,7 +189,20 @@ export function parseTradeRecords(rows: unknown[][]): TradeRecord[] {
     const date = normalizeDate(row[indices.date!])
     if (!date) continue
 
-    const direction = parseDirection(row[indices.direction ?? -1])
+    let direction = indices.direction != null ? parseDirection(row[indices.direction]) : null
+
+    // Fallback: 若方向列缺失或无法识别，尝试从发生金额正负推断（买入扣钱为负，卖出收钱为正）
+    if (direction === null && indices.totalCost != null) {
+      const tc = parseNumber(row[indices.totalCost])
+      if (tc < 0) direction = "buy"
+      else if (tc > 0) direction = "sell"
+    }
+
+    if (direction === null) {
+      // 方向无法识别，跳过该记录（防止静默污染统计）
+      continue
+    }
+
     const quantity = indices.quantity != null ? parseNumber(row[indices.quantity]) : 0
     const price = indices.price != null ? parseNumber(row[indices.price]) : 0
     // 某些券商 CSV 中买入金额为负数，统一取绝对值
@@ -312,7 +328,7 @@ interface Lot {
  * 这些行为会导致持仓成本或数量突变，从而使 FIFO 盈亏计算结果错乱。
  * 建议：如交割单中包含此类记录，应通过摘要/备注列提前过滤，或在 wiki 中手动标注并调整持仓成本。
  */
-export function calculateFifoPnL(allRecords: TradeRecord[]): Map<string, number> {
+export function calculateFifoPnL(allRecords: TradeRecord[]): { datePnL: Map<string, number>; hasUnknownCost: boolean } {
   const sorted = [...allRecords].sort((a, b) => {
     const dtA = `${a.date}T${a.time || "00:00:00"}`
     const dtB = `${b.date}T${b.time || "00:00:00"}`
@@ -321,6 +337,7 @@ export function calculateFifoPnL(allRecords: TradeRecord[]): Map<string, number>
 
   const holdings = new Map<string, Lot[]>()
   const datePnL = new Map<string, number>()
+  let hasUnknownCost = false
 
   for (const r of sorted) {
     const lots = holdings.get(r.code) ?? []
@@ -346,13 +363,29 @@ export function calculateFifoPnL(allRecords: TradeRecord[]): Map<string, number>
 
       holdings.set(r.code, lots)
 
-      // 已实现盈亏 = 卖出成交金额 - 卖出成本 - 卖出相关费用
-      const realizedPnL = r.amount - soldCost - r.fee - r.stampTax - r.transferFee
-      datePnL.set(r.date, (datePnL.get(r.date) ?? 0) + realizedPnL)
+      if (remainingQty > 0) {
+        // 卖出数量超过已知持仓 — 缺少期初持仓，成本未知
+        hasUnknownCost = true
+        // 只计算已知成本匹配部分的盈亏（按成交额比例分摊费用）
+        const matchedQty = r.quantity - remainingQty
+        if (matchedQty > 0) {
+          const ratio = matchedQty / r.quantity
+          const matchedAmount = r.amount * ratio
+          const matchedFee = r.fee * ratio
+          const matchedStamp = r.stampTax * ratio
+          const matchedTransfer = r.transferFee * ratio
+          const realizedPnL = matchedAmount - soldCost - matchedFee - matchedStamp - matchedTransfer
+          datePnL.set(r.date, (datePnL.get(r.date) ?? 0) + realizedPnL)
+        }
+      } else {
+        // 全部有成本 basis，正常计算
+        const realizedPnL = r.amount - soldCost - r.fee - r.stampTax - r.transferFee
+        datePnL.set(r.date, (datePnL.get(r.date) ?? 0) + realizedPnL)
+      }
     }
   }
 
-  return datePnL
+  return { datePnL, hasUnknownCost }
 }
 
 // ==================== Markdown 生成 ====================

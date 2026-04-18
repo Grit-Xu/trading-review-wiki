@@ -8082,7 +8082,7 @@ dependencies = [
 
 [[package]]
 name = "trading-review-wiki"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "arrow-array",
  "arrow-schema",

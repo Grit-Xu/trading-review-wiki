@@ -73,10 +73,12 @@ export function DashboardView() {
     load()
   }, [project])
 
-  const { monthly, stocks, overall } = useMemo(
+  const { monthly, stocks, overall, unknownCostSales } = useMemo(
     () => computeDashboardStats(dayStats),
     [dayStats]
   )
+
+  const hasUnknownCost = overall.hasUnknownCost
 
   const priceRecord: Record<string, number> = {}
   for (const [code, val] of Object.entries(marketPrices)) {
@@ -180,6 +182,15 @@ export function DashboardView() {
                 tone={parseFloat(winRate) >= 50 ? "positive" : "negative"}
               />
             </div>
+
+            {/* 缺少期初持仓警告 */}
+            {hasUnknownCost && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-600">
+                <span className="font-medium">⚠️ 提示：</span>
+                部分卖出记录缺少期初持仓数据（共 {overall.totalUnknownQty} 股），区间首日/早期卖出盈亏可能失真。
+                建议导入完整历史交割单，或在"设置"中录入期初持仓以修正统计。
+              </div>
+            )}
 
             {/* Charts Row */}
             <div className="grid gap-6 lg:grid-cols-2">

@@ -56,6 +56,10 @@ export interface OverallStats {
   lossDays: number
   breakEvenDays: number
   avgDayNetPnL: number
+  /** 是否存在卖出超过已知持仓的情况（缺少期初持仓） */
+  hasUnknownCost: boolean
+  /** 成本未知的卖出总股数 */
+  totalUnknownQty: number
 }
 
 function parseNumber(str: string): number {
@@ -145,6 +149,12 @@ interface Lot {
   costPerShare: number // (成交金额 + 买入相关费用) / 数量
 }
 
+interface UnknownCostSale {
+  date: string
+  quantity: number
+  proceeds: number // 该部分卖出的净收入（已扣除费用）
+}
+
 interface FifoResult {
   /** 每日已实现盈亏（仅卖出日有值） */
   dailyRealizedPnL: Map<string, number>
@@ -152,6 +162,10 @@ interface FifoResult {
   stockRealizedPnL: Map<string, { name: string; pnl: number; fees: number }>
   /** 当前剩余持仓批次 */
   holdings: Map<string, Lot[]>
+  /** 成本未知的卖出记录（缺少期初持仓导致） */
+  unknownCostSales: Map<string, UnknownCostSale[]>
+  /** 是否存在成本未知的卖出 */
+  hasUnknownCost: boolean
 }
 
 /**
@@ -170,6 +184,8 @@ function runFifoEngine(records: TradeStatRecord[]): FifoResult {
   const holdings = new Map<string, Lot[]>()
   const dailyRealizedPnL = new Map<string, number>()
   const stockRealizedPnL = new Map<string, { name: string; pnl: number; fees: number }>()
+  const unknownCostSales = new Map<string, UnknownCostSale[]>()
+  let hasUnknownCost = false
 
   for (const r of sorted) {
     const lots = holdings.get(r.code) ?? []
@@ -195,19 +211,46 @@ function runFifoEngine(records: TradeStatRecord[]): FifoResult {
 
       holdings.set(r.code, lots)
 
-      // 卖出净收入 = 成交金额 - 卖出手续费 - 印花税 - 过户费
-      const proceeds = r.amount - r.fee - r.stampTax - r.transferFee
-      const realized = proceeds - soldCostBasis
-      dailyRealizedPnL.set(r.date, (dailyRealizedPnL.get(r.date) ?? 0) + realized)
+      if (remaining > 0) {
+        // 卖出数量超过已知持仓 — 缺少期初持仓
+        hasUnknownCost = true
+        const netProceeds = r.amount - r.fee - r.stampTax - r.transferFee
+        const unk = unknownCostSales.get(r.code) ?? []
+        unk.push({ date: r.date, quantity: remaining, proceeds: netProceeds })
+        unknownCostSales.set(r.code, unk)
 
-      const s = stockRealizedPnL.get(r.code) ?? { name: r.name, pnl: 0, fees: 0 }
-      s.pnl += realized
-      s.fees += r.fee + r.stampTax + r.transferFee
-      stockRealizedPnL.set(r.code, s)
+        // 只计算已知成本匹配部分的盈亏（按成交额比例分摊费用）
+        const matchedQty = r.quantity - remaining
+        if (matchedQty > 0) {
+          const ratio = matchedQty / r.quantity
+          const matchedAmount = r.amount * ratio
+          const matchedFee = r.fee * ratio
+          const matchedStamp = r.stampTax * ratio
+          const matchedTransfer = r.transferFee * ratio
+          const matchedProceeds = matchedAmount - matchedFee - matchedStamp - matchedTransfer
+          const realized = matchedProceeds - soldCostBasis
+          dailyRealizedPnL.set(r.date, (dailyRealizedPnL.get(r.date) ?? 0) + realized)
+
+          const s = stockRealizedPnL.get(r.code) ?? { name: r.name, pnl: 0, fees: 0 }
+          s.pnl += realized
+          s.fees += matchedFee + matchedStamp + matchedTransfer
+          stockRealizedPnL.set(r.code, s)
+        }
+      } else {
+        // 全部有成本 basis，正常计算
+        const proceeds = r.amount - r.fee - r.stampTax - r.transferFee
+        const realized = proceeds - soldCostBasis
+        dailyRealizedPnL.set(r.date, (dailyRealizedPnL.get(r.date) ?? 0) + realized)
+
+        const s = stockRealizedPnL.get(r.code) ?? { name: r.name, pnl: 0, fees: 0 }
+        s.pnl += realized
+        s.fees += r.fee + r.stampTax + r.transferFee
+        stockRealizedPnL.set(r.code, s)
+      }
     }
   }
 
-  return { dailyRealizedPnL, stockRealizedPnL, holdings }
+  return { dailyRealizedPnL, stockRealizedPnL, holdings, unknownCostSales, hasUnknownCost }
 }
 
 // ── Dashboard Stats ───────────────────────────────────────────────────────────
@@ -217,6 +260,7 @@ export function computeDashboardStats(dayStatsList: TradeDayStats[]): {
   monthly: MonthlyStat[]
   stocks: StockStat[]
   overall: OverallStats
+  unknownCostSales: Map<string, UnknownCostSale[]>
 } {
   const sortedDays = [...dayStatsList].sort((a, b) => a.date.localeCompare(b.date))
 
@@ -286,6 +330,12 @@ export function computeDashboardStats(dayStatsList: TradeDayStats[]): {
   const breakEvenDays = dayPnLs.filter((v) => v === 0).length
   const avgDayNetPnL = sortedDays.length > 0 ? totalNetPnL / sortedDays.length : 0
 
+  // 统计成本未知的卖出总量
+  let totalUnknownQty = 0
+  for (const sales of fifo.unknownCostSales.values()) {
+    totalUnknownQty += sales.reduce((s, v) => s + v.quantity, 0)
+  }
+
   const overall: OverallStats = {
     totalTradeCount,
     totalBuyAmount,
@@ -300,9 +350,11 @@ export function computeDashboardStats(dayStatsList: TradeDayStats[]): {
     lossDays,
     breakEvenDays,
     avgDayNetPnL,
+    hasUnknownCost: fifo.hasUnknownCost,
+    totalUnknownQty,
   }
 
-  return { days: sortedDays, monthly, stocks, overall }
+  return { days: sortedDays, monthly, stocks, overall, unknownCostSales: fifo.unknownCostSales }
 }
 
 // ── Current Holdings ──────────────────────────────────────────────────────────
