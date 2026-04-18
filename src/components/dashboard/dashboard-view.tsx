@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { listDirectory, readFile } from "@/commands/fs"
-import { normalizePath, getFileName } from "@/lib/path-utils"
+import { normalizePath } from "@/lib/path-utils"
 import {
   parseTradeMarkdown,
   computeDashboardStats,
@@ -32,7 +32,6 @@ import { Button } from "@/components/ui/button"
 export function DashboardView() {
   const project = useWikiStore((s) => s.project)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [dayStats, setDayStats] = useState<TradeDayStats[]>([])
   const [activeTab, setActiveTab] = useState<"stats" | "holdings">("stats")
   const [marketPrices, setMarketPrices] = useState<Record<string, string>>({})
@@ -45,6 +44,8 @@ export function DashboardView() {
     avgCost: 0,
     asOfDate: new Date().toISOString().slice(0, 10),
   })
+
+  const dataVersion = useWikiStore((s) => s.dataVersion)
 
   useEffect(() => {
     let cancelled = false
@@ -98,7 +99,7 @@ export function DashboardView() {
 
     load()
     return () => { cancelled = true }
-  }, [project])
+  }, [project, dataVersion])
 
   const { monthly, stocks, overall } = useMemo(
     () => computeDashboardStats(dayStats, openingPositions),
@@ -122,6 +123,10 @@ export function DashboardView() {
     const code = opForm.code.trim()
     const name = opForm.name.trim()
     if (!project || !code || !name || opForm.quantity <= 0 || opForm.avgCost <= 0) return
+    if (openingPositions.some((op) => op.code === code)) {
+      window.alert(`代码 ${code} 的期初持仓已存在，请先删除旧记录再添加。`)
+      return
+    }
     const item: OpeningPosition = { code, name, quantity: opForm.quantity, avgCost: opForm.avgCost, asOfDate: opForm.asOfDate }
     const next = [...openingPositions, item]
     try {
@@ -161,15 +166,7 @@ export function DashboardView() {
     )
   }
 
-  if (dayStats.length === 0) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 text-muted-foreground">
-        <BarChart3 className="h-12 w-12 opacity-50" />
-        <p className="text-lg font-medium">暂无交割单数据</p>
-        <p className="text-sm">在 Sources 面板中导入交割单后，统计看板将自动汇总</p>
-      </div>
-    )
-  }
+  const noTradeData = dayStats.length === 0
 
   return (
     <div className="h-full overflow-auto p-6">
@@ -207,7 +204,15 @@ export function DashboardView() {
           </div>
         </div>
 
-        {activeTab === "stats" && (
+        {activeTab === "stats" && noTradeData && (
+          <div className="flex h-[60vh] flex-col items-center justify-center gap-4 text-muted-foreground">
+            <BarChart3 className="h-12 w-12 opacity-50" />
+            <p className="text-lg font-medium">暂无交割单数据</p>
+            <p className="text-sm">在 Sources 面板中导入交割单后，统计看板将自动汇总</p>
+          </div>
+        )}
+
+        {activeTab === "stats" && !noTradeData && (
           <>
             {/* KPI Cards */}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

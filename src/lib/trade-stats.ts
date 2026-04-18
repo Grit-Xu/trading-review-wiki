@@ -196,12 +196,19 @@ function runFifoEngine(
 
   const holdings = new Map<string, Lot[]>()
 
-  // 注入期初持仓
+  // 注入期初持仓（同代码合并为加权平均成本）
   if (openingPositions) {
+    const merged = new Map<string, { quantity: number; totalCost: number }>()
     for (const pos of openingPositions) {
-      const lots = holdings.get(pos.code) ?? []
-      lots.unshift({ quantity: pos.quantity, costPerShare: pos.avgCost })
-      holdings.set(pos.code, lots)
+      const existing = merged.get(pos.code) ?? { quantity: 0, totalCost: 0 }
+      existing.quantity += pos.quantity
+      existing.totalCost += pos.quantity * pos.avgCost
+      merged.set(pos.code, existing)
+    }
+    for (const [code, { quantity, totalCost }] of merged.entries()) {
+      const lots = holdings.get(code) ?? []
+      lots.unshift({ quantity, costPerShare: quantity > 0 ? totalCost / quantity : 0 })
+      holdings.set(code, lots)
     }
   }
   const dailyRealizedPnL = new Map<string, number>()
@@ -404,9 +411,17 @@ export function calculateCurrentHoldings(
   const allRecords = dayStatsList.flatMap((d) => d.records)
   const fifo = runFifoEngine(allRecords, openingPositions)
 
+  // 从交易记录 + 期初持仓中收集名称映射
   const nameMap = new Map<string, string>()
   for (const r of allRecords) {
     nameMap.set(r.code, r.name)
+  }
+  if (openingPositions) {
+    for (const op of openingPositions) {
+      if (!nameMap.has(op.code)) {
+        nameMap.set(op.code, op.name)
+      }
+    }
   }
 
   const result: Holding[] = []

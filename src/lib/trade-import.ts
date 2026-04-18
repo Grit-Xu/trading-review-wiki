@@ -114,9 +114,14 @@ function normalizeDate(value: unknown): string {
   if (short) {
     const [, y, m, d] = short
     const year = parseInt(y, 10) >= 50 ? `19${y}` : `20${y}`
-    return `${year}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`
+    const month = parseInt(m, 10)
+    const day = parseInt(d, 10)
+    // 校验月份和日期有效性，防止美式 MM/DD/YY 被误解析
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    }
   }
-  return str
+  return "" // 无法识别为日期，返回空字符串以便调用方过滤
 }
 
 function parseDirection(value: unknown): TradeRecord["direction"] | null {
