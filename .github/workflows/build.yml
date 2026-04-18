@@ -73,8 +73,8 @@ jobs:
         # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'LLM Wiki ${{ github.ref_name }}'
-          releaseBody: 'See the assets below for download links.'
+          releaseName: 'Trading Review Wiki ${{ github.ref_name }}'
+          releaseBody: 'See [CHANGELOG](../../blob/main/CHANGELOG.md) for full release notes.'
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
