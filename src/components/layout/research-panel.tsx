@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { useResearchStore, type ResearchTask } from "@/stores/research-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile } from "@/commands/fs"
-import { queueResearch } from "@/lib/deep-research"
+import { queueResearch, saveResearchDraft } from "@/lib/deep-research"
 import { normalizePath } from "@/lib/path-utils"
 
 export function ResearchPanel() {
@@ -26,6 +26,7 @@ export function ResearchPanel() {
 
   const running = tasks.filter((t) => ["searching", "synthesizing", "saving"].includes(t.status))
   const queued = tasks.filter((t) => t.status === "queued")
+  const pendingReview = tasks.filter((t) => t.status === "pending_review")
   const done = tasks.filter((t) => t.status === "done" || t.status === "error")
 
   function handleStartResearch() {
@@ -82,6 +83,17 @@ export function ResearchPanel() {
           </div>
         ) : (
           <div className="flex flex-col gap-1 p-2">
+            {/* Pending review — highest priority, needs user action */}
+            {pendingReview.length > 0 && (
+              <>
+                <div className="px-1 py-0.5 text-[10px] font-semibold text-amber-500 uppercase tracking-wider">
+                  待审核 ({pendingReview.length})
+                </div>
+                {pendingReview.map((task) => (
+                  <ResearchTaskCard key={task.id} task={task} onRemove={removeTask} />
+                ))}
+              </>
+            )}
             {running.map((task) => (
               <ResearchTaskCard key={task.id} task={task} onRemove={removeTask} />
             ))}
@@ -192,16 +204,26 @@ function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStrea
 
 function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (id: string) => void }) {
   const [expanded, setExpanded] = useState(
-    task.status === "synthesizing" || task.status === "searching"
+    task.status === "synthesizing" || task.status === "searching" || task.status === "pending_review"
   )
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const project = useWikiStore((s) => s.project)
+  const llmConfig = useWikiStore((s) => s.llmConfig)
+  const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
+
+  // Auto-expand when task enters pending_review (user needs to see the review buttons)
+  useEffect(() => {
+    if (task.status === "pending_review") {
+      setExpanded(true)
+    }
+  }, [task.status])
 
   const statusIcon = {
     queued: <div className="h-3 w-3 rounded-full border-2 border-muted-foreground" />,
     searching: <Loader2 className="h-3 w-3 animate-spin text-blue-500" />,
     synthesizing: <Loader2 className="h-3 w-3 animate-spin text-purple-500" />,
+    pending_review: <AlertCircle className="h-3 w-3 text-amber-500" />,
     saving: <Loader2 className="h-3 w-3 animate-spin text-orange-500" />,
     done: <CheckCircle2 className="h-3 w-3 text-emerald-500" />,
     error: <AlertCircle className="h-3 w-3 text-destructive" />,
@@ -211,6 +233,7 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
     queued: "Queued",
     searching: "Searching web...",
     synthesizing: "Synthesizing...",
+    pending_review: "待审核",
     saving: "Saving to wiki...",
     done: task.savedPath ? "Saved" : "Done",
     error: "Failed",
@@ -226,6 +249,26 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
     } catch {
       // ignore
     }
+  }
+
+  async function handleSaveDraft() {
+    if (!project || task.status !== "pending_review") return
+    try {
+      await saveResearchDraft(normalizePath(project.path), task, llmConfig)
+    } catch (err) {
+      window.alert(`保存失败: ${err}`)
+    }
+  }
+
+  function handleRegenerate() {
+    if (!project || task.status !== "pending_review") return
+    // Remove the task and re-queue with same topic
+    const topic = task.topic
+    const queries = task.searchQueries
+    onRemove(task.id)
+    const taskId = queueResearch(normalizePath(project.path), topic, llmConfig, searchApiConfig, queries)
+    // Ensure panel stays open
+    useResearchStore.getState().setPanelOpen(true)
   }
 
   return (
@@ -273,13 +316,64 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
             </div>
           )}
 
-          {/* Synthesis (streaming) */}
-          {task.synthesis && (
+          {/* Synthesis (streaming or pending review) */}
+          {task.synthesis && task.status !== "pending_review" && (
             <SynthesisBlock synthesis={task.synthesis} isStreaming={task.status === "synthesizing"} />
+          )}
+          {/* Pending review: show clean draftContent without think blocks */}
+          {task.status === "pending_review" && task.draftContent && (
+            <div className="mb-2">
+              <div className="mb-1 font-medium text-muted-foreground">合成结果预览</div>
+              <div className="rounded bg-muted/30 p-2 prose prose-xs prose-invert max-w-none" style={{ maxHeight: "calc(100vh - 420px)", minHeight: "120px", overflowY: "auto" }}>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm, remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                  components={{
+                    table: ({ children, ...props }) => (
+                      <div className="my-2 overflow-x-auto rounded border border-border">
+                        <table className="w-full border-collapse text-xs" {...props}>{children}</table>
+                      </div>
+                    ),
+                    thead: ({ children, ...props }) => (
+                      <thead className="bg-muted" {...props}>{children}</thead>
+                    ),
+                    th: ({ children, ...props }) => (
+                      <th className="border border-border/80 px-3 py-1.5 text-left font-semibold bg-muted" {...props}>{children}</th>
+                    ),
+                    td: ({ children, ...props }) => (
+                      <td className="border border-border/60 px-3 py-1.5" {...props}>{children}</td>
+                    ),
+                  }}
+                >
+                  {task.draftContent}
+                </ReactMarkdown>
+              </div>
+            </div>
           )}
 
           {/* Actions */}
-          <div className="flex items-center gap-1.5 mt-2">
+          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+            {task.status === "pending_review" && (
+              <>
+                <Button variant="default" size="sm" className="h-6 text-[11px] gap-1" onClick={handleSaveDraft}>
+                  <CheckCircle2 className="h-3 w-3" />
+                  保存到 Wiki
+                </Button>
+                <Button variant="outline" size="sm" className="h-6 text-[11px] gap-1" onClick={handleRegenerate}>
+                  <Search className="h-3 w-3" />
+                  重新生成
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-[11px] gap-1 text-muted-foreground"
+                  onClick={() => onRemove(task.id)}
+                >
+                  <X className="h-3 w-3" />
+                  丢弃
+                </Button>
+              </>
+            )}
             {task.savedPath && (
               <Button variant="outline" size="sm" className="h-6 text-[11px] gap-1" onClick={handleOpenSaved}>
                 <FileText className="h-3 w-3" />

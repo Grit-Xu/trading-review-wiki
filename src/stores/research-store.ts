@@ -5,9 +5,10 @@ export interface ResearchTask {
   id: string
   topic: string
   searchQueries?: string[]
-  status: "queued" | "searching" | "synthesizing" | "saving" | "done" | "error"
+  status: "queued" | "searching" | "synthesizing" | "pending_review" | "saving" | "done" | "error"
   webResults: WebSearchResult[]
   synthesis: string
+  draftContent: string | null
   savedPath: string | null
   error: string | null
   createdAt: number
@@ -44,6 +45,7 @@ export const useResearchStore = create<ResearchState>((set, get) => ({
           status: "queued",
           webResults: [],
           synthesis: "",
+          draftContent: null,
           savedPath: null,
           error: null,
           createdAt: Date.now(),

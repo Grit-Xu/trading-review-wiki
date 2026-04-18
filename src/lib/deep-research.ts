@@ -3,7 +3,7 @@ import { streamChat } from "./llm-client"
 import { autoIngest } from "./ingest"
 import { writeFile, readFile, listDirectory } from "@/commands/fs"
 import { useWikiStore, type LlmConfig, type SearchApiConfig } from "@/stores/wiki-store"
-import { useResearchStore } from "@/stores/research-store"
+import { useResearchStore, type ResearchTask } from "@/stores/research-store"
 import { normalizePath } from "@/lib/path-utils"
 
 let processing = false
@@ -164,36 +164,76 @@ async function executeResearch(
       return
     }
 
-    // Step 3: Save to wiki
-    store.updateTask(taskId, { status: "saving", synthesis: accumulated })
-
-    const date = new Date().toISOString().slice(0, 10)
-    const slug = topic.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").slice(0, 50)
-    const fileName = `research-${slug}-${date}.md`
-    const filePath = `${pp}/wiki/queries/${fileName}`
-
-    const references = webResults
-      .map((r, i) => `${i + 1}. [${r.title}](${r.url}) — ${r.source}`)
-      .join("\n")
-
-    // Strip <think>/<thinking> blocks before saving
+    // Step 3: Prepare draft for human review (do NOT save yet)
     const cleanedSynthesis = accumulated
       .replace(/<think(?:ing)?>\s*[\s\S]*?<\/think(?:ing)?>\s*/gi, "")
       .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "") // unclosed thinking block
       .trimStart()
 
+    store.updateTask(taskId, {
+      status: "pending_review",
+      synthesis: accumulated,
+      draftContent: cleanedSynthesis,
+    })
+
+    onTaskFinished(pp, llmConfig, searchConfig)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    useResearchStore.getState().updateTask(taskId, {
+      status: "error",
+      error: message,
+    })
+  }
+
+  onTaskFinished(pp, llmConfig, searchConfig)
+}
+
+/**
+ * Save a research draft to the wiki after human review.
+ * Called from the Research panel when user clicks "Save to Wiki".
+ */
+export async function saveResearchDraft(
+  projectPath: string,
+  task: ResearchTask,
+  llmConfig: LlmConfig,
+): Promise<string> {
+  const pp = normalizePath(projectPath)
+  const store = useResearchStore.getState()
+
+  if (task.draftContent === null) {
+    throw new Error("No draft content to save")
+  }
+
+  // Guard against double-click / rapid-fire saves
+  const current = store.tasks.find((t) => t.id === task.id)
+  if (!current || current.status !== "pending_review") {
+    throw new Error("Task is no longer in review state")
+  }
+
+  store.updateTask(task.id, { status: "saving" })
+
+  try {
+    const date = new Date().toISOString().slice(0, 10)
+    const slug = task.topic.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").slice(0, 50)
+    const fileName = `research-${slug}-${date}.md`
+    const filePath = `${pp}/wiki/queries/${fileName}`
+
+    const references = task.webResults
+      .map((r, i) => `${i + 1}. [${r.title}](${r.url}) — ${r.source}`)
+      .join("\n")
+
     const pageContent = [
       "---",
       `type: query`,
-      `title: "Research: ${topic.replace(/"/g, '\\"')}"`,
+      `title: "Research: ${task.topic.replace(/"/g, '\\"')}"`,
       `created: ${date}`,
       `origin: deep-research`,
       `tags: [research]`,
       "---",
       "",
-      `# Research: ${topic}`,
+      `# Research: ${task.topic}`,
       "",
-      cleanedSynthesis,
+      task.draftContent,
       "",
       "## References",
       "",
@@ -204,7 +244,7 @@ async function executeResearch(
     await writeFile(filePath, pageContent)
     const savedPath = `wiki/queries/${fileName}`
 
-    useResearchStore.getState().updateTask(taskId, {
+    store.updateTask(task.id, {
       status: "done",
       savedPath,
     })
@@ -219,18 +259,20 @@ async function executeResearch(
     }
 
     // Auto-ingest the research result to generate entities, concepts, cross-references
-    autoIngest(pp, `${pp}/${savedPath}`, llmConfig).catch((err) => {
+    const ingestPath = normalizePath(`${pp}/${savedPath}`)
+    autoIngest(pp, ingestPath, llmConfig).catch((err) => {
       console.error("Failed to auto-ingest research result:", err)
     })
+
+    return savedPath
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    useResearchStore.getState().updateTask(taskId, {
+    store.updateTask(task.id, {
       status: "error",
       error: message,
     })
+    throw err
   }
-
-  onTaskFinished(pp, llmConfig, searchConfig)
 }
 
 function onTaskFinished(
