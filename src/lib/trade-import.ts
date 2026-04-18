@@ -17,22 +17,28 @@ export interface TradeRecord {
 }
 
 const HEADER_MAP: Record<keyof TradeRecord, string[]> = {
-  date: ["日期", "成交日期", "交割日期", "委托日期", "date", "tradedate", "交易日期", "发生日期"],
-  time: ["时间", "成交时间", "委托时间", "time", "成交时刻"],
-  code: ["证券代码", "股票代码", "代码", "code", "stockcode", "证券编号", "合约"],
-  name: ["证券名称", "股票名称", "名称", "name", "stockname", "证券简称"],
-  direction: ["操作", "买卖方向", "成交方向", "委托方向", "买卖标志", "direction", "side", "买/卖", "交易方向", "买卖"],
-  quantity: ["成交数量", "数量", "quantity", "volume", "成交股数", "股数", "委托数量"],
-  price: ["成交价格", "价格", "price", "成交均价", "均价", "成交单价", "委托价格"],
-  amount: ["成交金额", "金额", "amount", "turnover", "成交总额", "成交额", "委托金额"],
-  fee: ["手续费", "佣金", "fee", "commission", "交易费用", "规费", "其他费用"],
-  stampTax: ["印花税", "stamptax", "印花"],
+  date: ["日期", "成交日期", "交割日期", "委托日期", "date", "tradedate", "交易日期", "发生日期", "交割日", "业务日期"],
+  time: ["时间", "成交时间", "委托时间", "time", "成交时刻", "委托时刻"],
+  code: ["证券代码", "股票代码", "代码", "code", "stockcode", "证券编号", "合约", "证券代号", "标的代码"],
+  name: ["证券名称", "股票名称", "名称", "name", "stockname", "证券简称", "标的名称"],
+  direction: ["操作", "买卖方向", "成交方向", "委托方向", "买卖标志", "direction", "side", "买/卖", "交易方向", "买卖", "业务名称", "发生业务", "委托类别", "成交类别"],
+  quantity: ["成交数量", "数量", "quantity", "volume", "成交股数", "股数", "委托数量", "股份余额", "成交股"],
+  price: ["成交价格", "价格", "price", "成交均价", "均价", "成交单价", "委托价格", "成交价格(元)", "成交均价(元)", "单价"],
+  amount: ["成交金额", "金额", "amount", "turnover", "成交总额", "成交额", "委托金额", "清算金额", "发生金额"],
+  fee: ["手续费", "佣金", "fee", "commission", "交易费用", "规费", "其他费用", "交易佣金"],
+  stampTax: ["印花税", "stamptax", "印花", "税收"],
   transferFee: ["过户费", "transferfee", "过户"],
-  totalCost: ["发生金额", "总费用", "totalamount", "清算金额", "发生额", "净额", "资金发生额"],
+  totalCost: ["发生金额", "总费用", "totalamount", "清算金额", "发生额", "净额", "资金发生额", "清算额", "资金额"],
 }
 
 function normalizeHeader(h: unknown): string {
-  return String(h ?? "").trim().replace(/\s+/g, "").toLowerCase()
+  return String(h ?? "")
+    .trim()
+    .replace(/[（(].*?[)）]/g, "")     // 去掉括号及内容：成交均价(元) → 成交均价
+    .replace(/[￥$¥,，]/g, "")         // 去掉货币符号、千分位、全角逗号
+    .replace(/[\s　]+/g, "")           // 去掉全半角空格
+    .replace(/[：:]/g, "")             // 去掉冒号
+    .toLowerCase()
 }
 
 function findHeaderIndex(headers: string[], keys: string[]): number {
@@ -46,7 +52,8 @@ function findHeaderIndex(headers: string[], keys: string[]): number {
 }
 
 function findHeaderRow(rows: unknown[][]): { rowIndex: number; headers: string[] } | null {
-  for (let i = 0; i < Math.min(rows.length, 20); i++) {
+  // 第一层：按原有逻辑扫前 50 行（原 20 行太少，有些券商前面有账户信息）
+  for (let i = 0; i < Math.min(rows.length, 50); i++) {
     const row = rows[i]
     if (!Array.isArray(row) || row.length < 3) continue
     const headers = row.map((h) => String(h ?? ""))
@@ -57,6 +64,30 @@ function findHeaderRow(rows: unknown[][]): { rowIndex: number; headers: string[]
       return { rowIndex: i, headers }
     }
   }
+
+  // 第二层 fallback：找"命中字段数最多"的行（最多扫前 100 行）
+  let best: { rowIndex: number; headers: string[]; score: number } | null = null
+  for (let i = 0; i < Math.min(rows.length, 100); i++) {
+    const row = rows[i]
+    if (!Array.isArray(row) || row.length < 3) continue
+    const headers = row.map((h) => String(h ?? ""))
+
+    let score = 0
+    if (findHeaderIndex(headers, HEADER_MAP.code) !== -1) score += 3
+    if (findHeaderIndex(headers, HEADER_MAP.date) !== -1) score += 2
+    if (findHeaderIndex(headers, HEADER_MAP.name) !== -1) score += 2
+    if (findHeaderIndex(headers, HEADER_MAP.direction) !== -1) score += 2
+    if (findHeaderIndex(headers, HEADER_MAP.quantity) !== -1) score += 1
+    if (findHeaderIndex(headers, HEADER_MAP.price) !== -1) score += 1
+    if (findHeaderIndex(headers, HEADER_MAP.amount) !== -1) score += 1
+
+    if (best == null || score > best.score) {
+      best = { rowIndex: i, headers, score }
+    }
+  }
+
+  // 至少命中 5 分（code + date + 任意一个），否则放弃
+  if (best && best.score >= 5) return best
   return null
 }
 
@@ -234,7 +265,59 @@ export function parseTradeRecords(rows: unknown[][]): TradeRecord[] {
     })
   }
 
+  // 合法性校验：即使表头识别成功，也可能列错位
+  const validation = validateParsedRecords(records)
+  if (!validation.valid) {
+    const issues = validation.issues.join("；")
+    throw new Error(`交割单解析异常：${issues}。请检查文件格式，或尝试手动调整列映射。`)
+  }
+
   return records
+}
+
+export interface ValidationResult {
+  valid: boolean
+  issues: string[]
+}
+
+function validateParsedRecords(records: TradeRecord[]): ValidationResult {
+  const issues: string[] = []
+  if (records.length === 0) {
+    issues.push("未解析到任何交易记录")
+    return { valid: false, issues }
+  }
+
+  // 日期格式检查：大部分应该是 YYYY-MM-DD
+  const dateLike = records.filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.date)).length
+  if (dateLike / records.length < 0.7) {
+    issues.push(`日期格式异常（仅 ${Math.round((dateLike / records.length) * 100)}% 符合 YYYY-MM-DD），可能列识别错位`)
+  }
+
+  // 代码格式检查：A 股通常是 6 位数字
+  const codeLike = records.filter((r) => /^\d{6}$/.test(r.code)).length
+  if (codeLike / records.length < 0.5) {
+    issues.push(`证券代码格式异常（仅 ${Math.round((codeLike / records.length) * 100)}% 为 6 位数字），可能列识别错位`)
+  }
+
+  // 方向检查
+  const dirKnown = records.filter((r) => r.direction === "buy" || r.direction === "sell").length
+  if (dirKnown / records.length < 0.8) {
+    issues.push(`买卖方向识别率过低（仅 ${Math.round((dirKnown / records.length) * 100)}%），建议检查字段映射`)
+  }
+
+  // 数量正数检查
+  const qtyPositive = records.filter((r) => r.quantity > 0).length
+  if (qtyPositive / records.length < 0.8) {
+    issues.push(`成交数量存在大量非正值（仅 ${Math.round((qtyPositive / records.length) * 100)}% 为正），可能列识别错位`)
+  }
+
+  // 金额合理性检查
+  const amountPositive = records.filter((r) => r.amount >= 0).length
+  if (amountPositive / records.length < 0.8) {
+    issues.push(`成交金额存在大量负值（仅 ${Math.round((amountPositive / records.length) * 100)}% 为非负），可能列识别错位`)
+  }
+
+  return { valid: issues.length === 0, issues }
 }
 
 export function parseTradeCSV(content: string): TradeRecord[] {
