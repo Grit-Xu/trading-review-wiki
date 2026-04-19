@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  📬 作者公众号：<strong>ymj0418</strong> • 欢迎老师们提交 bug 和反馈
+</p>
+
+<p align="center">
   <a href="#核心功能">核心功能</a> •
   <a href="#快速开始">快速开始</a> •
   <a href="#技术栈">技术栈</a> •

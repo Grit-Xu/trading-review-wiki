@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  📬 Author WeChat Public Account: <strong>ymj0418</strong> • Welcome to submit bugs and feedback
+</p>
+
+<p align="center">
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#tech-stack">Tech Stack</a> •
