@@ -50,7 +50,17 @@ jobs:
 
       - name: Install protoc (Windows)
         if: matrix.platform == 'windows-latest'
-        run: choco install protoc -y
+        run: |
+          $maxAttempts = 3
+          $attempt = 0
+          while ($attempt -lt $maxAttempts) {
+            $attempt++
+            Write-Host "Attempt $attempt of $maxAttempts..."
+            choco install protoc -y
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Start-Sleep -Seconds 10
+          }
+          exit 1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
