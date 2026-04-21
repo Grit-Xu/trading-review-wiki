@@ -66,8 +66,8 @@ export async function autoIngest(
     return cachedFiles
   }
 
-  const truncatedContent = sourceContent.length > 50000
-    ? sourceContent.slice(0, 50000) + "\n\n[...truncated...]"
+  const truncatedContent = sourceContent.length > 100000
+    ? sourceContent.slice(0, 100000) + "\n\n[...truncated...]"
     : sourceContent
 
   // ── Step 1: Analysis ──────────────────────────────────────────
@@ -168,7 +168,7 @@ export async function autoIngest(
       "",
       `# Source: ${fileName}`,
       "",
-      analysis ? analysis.slice(0, 3000) : "(Analysis not available)",
+      analysis || "(Analysis not available)",
       "",
     ].join("\n")
     try {
