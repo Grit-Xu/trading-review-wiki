@@ -43,6 +43,46 @@
 - **Wiki Reorganize Script** — Bulk-move misplaced root-level pages into typed directories. Handy when LLM puts files in the wrong place. [Script](scripts/reorganize-wiki.cjs) · [When to use & How to use](scripts/README.md)
 - **OpenClaw Collaboration** — Automated daily market review at 18:00 via OpenClaw multi-agent system. See [collab/README.md](collab/README.md) for setup.
 
+### OpenClaw Collaboration (Optional)
+
+Connect Trading Review Wiki with [OpenClaw](https://github.com/nashsu/openclaw) multi-agent system for fully automated post-market review:
+
+```
+Trading Day Close          OpenClaw 18:00            User Review
+      │                          │                        │
+      ▼                          ▼                        ▼
+┌──────────┐              ┌──────────────┐        ┌──────────────┐
+│ Market   │─────────────▶│ Auto-generate│───────▶│ View Report  │
+│ Data     │              │ Daily Review │        │ + Add Notes  │
+└──────────┘              └──────────────┘        └──────────────┘
+                                 │                        │
+                                 ▼                        ▼
+                          ┌──────────────┐        ┌──────────────┐
+                          │ raw/openclaw/│        │ "Ingest" to  │
+                          │ {date}/      │        │ Wiki LLM     │
+                          │ daily-report │        │              │
+                          └──────────────┘        └──────────────┘
+                                                         │
+                                                         ▼
+                                                  ┌──────────────┐
+                                                  │ wiki/        │
+                                                  │ 股票/ 模式/  │
+                                                  │ 错误/ 进化/  │
+                                                  └──────────────┘
+```
+
+**What it does:**
+
+| Feature | Description | Trigger |
+|---------|-------------|---------|
+| **Daily Market Review** | Auto-generates 6-section report (market overview, sector analysis, positions, trades, tomorrow's plan, mindset) | Every trading day at 18:00 |
+| **Position Tracking** | Auto-updates `wiki/position-tracking.md` when you tell OpenClaw about trades | On-demand |
+| **Rule Checking** | Automatic position size, risk control, and sentiment signal alerts | Every review |
+| **Settlement Archive** | Auto-archives broker statements to `settlements/` | 18:30 daily |
+| **Weekly/Monthly Lint** | Pattern summary, win rate stats, system optimization | Sunday 20:00 / Month-end 21:00 |
+
+**Setup:** Copy the `collab/` folder to your wiki workspace `raw/openclaw数据/`, update paths in `_config.md`, and configure the cron job in OpenClaw. See [collab/README.md](collab/README.md) for full instructions.
+
 ### Knowledge Management
 
 - **Two-Step Chain-of-Thought Ingest** — LLM analyzes first, then writes wiki pages
