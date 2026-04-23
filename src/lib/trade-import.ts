@@ -121,11 +121,31 @@ function normalizeDate(value: unknown): string {
       return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
     }
   }
+  // 20260423 (8位数字，无分隔符)
+  const compact = str.match(/^(\d{4})(\d{2})(\d{2})$/)
+  if (compact) {
+    const [, y, m, d] = compact
+    const year = parseInt(y, 10)
+    const month = parseInt(m, 10)
+    const day = parseInt(d, 10)
+    if (year >= 2000 && year <= 2100 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${y}-${m}-${d}`
+    }
+  }
   return "" // 无法识别为日期，返回空字符串以便调用方过滤
 }
 
+function stripExcelFormula(value: string): string {
+  // 处理 Excel 公式格式: ="xxx" → xxx
+  if (value.startsWith('="') && value.endsWith('"')) {
+    return value.slice(2, -1)
+  }
+  return value
+}
+
 function parseDirection(value: unknown): TradeRecord["direction"] | null {
-  const str = String(value ?? "").trim().toLowerCase()
+  let str = String(value ?? "").trim()
+  str = stripExcelFormula(str).toLowerCase()
   // 买入别名
   if (["买", "买入", "b", "buy", "buyin", "多头", "多", "证券买入", "+", "+1", "正", "1"].includes(str)) return "buy"
   // 卖出别名（含带 - 号的常见券商格式）
@@ -629,11 +649,19 @@ export function parseTradeRecordsWithMapping(
     if (!row || row.length === 0) continue
     if (row.every((cell) => cell == null || String(cell).trim() === "")) continue
 
-    const date = mapping.date != null ? normalizeDate(row[mapping.date]) : ""
-    if (!date) continue
+    const dateRaw = row[mapping.date!]
+    const date = mapping.date != null ? normalizeDate(stripExcelFormula(String(dateRaw ?? "").trim())) : ""
+    if (!date) {
+      console.log(`[trade-import] Skip row ${i}: dateRaw="${dateRaw}" normalized="${date}"`)
+      continue
+    }
 
-    const code = mapping.code != null ? String(row[mapping.code] ?? "").trim() : ""
-    if (!code) continue
+    const codeRaw = row[mapping.code!]
+    let code = mapping.code != null ? stripExcelFormula(String(codeRaw ?? "").trim()) : ""
+    if (!code) {
+      console.log(`[trade-import] Skip row ${i}: codeRaw="${codeRaw}"`)
+      continue
+    }
 
     let direction: TradeRecord["direction"] | null = null
     if (mapping.direction != null) {
@@ -671,9 +699,9 @@ export function parseTradeRecordsWithMapping(
 
     records.push({
       date,
-      time: mapping.time != null ? String(row[mapping.time] ?? "").trim() || undefined : undefined,
+      time: mapping.time != null ? stripExcelFormula(String(row[mapping.time] ?? "").trim()) || undefined : undefined,
       code,
-      name: mapping.name != null ? String(row[mapping.name] ?? "").trim() : code,
+      name: mapping.name != null ? stripExcelFormula(String(row[mapping.name] ?? "").trim()) : code,
       direction,
       quantity,
       price,
