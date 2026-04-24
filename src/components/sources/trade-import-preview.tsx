@@ -38,7 +38,7 @@ interface TradeImportPreviewProps {
   open: boolean
   preview: ImportPreview | null
   fileName: string
-  onConfirm: (mapping: Record<ColumnType, number | null>) => void
+  onConfirm: (mapping: Record<ColumnType, number | null>, headerRowIndex: number) => void
   onCancel: () => void
 }
 
@@ -97,7 +97,7 @@ export function TradeImportPreview({
     for (const [colIdx, type] of Object.entries(mapping)) {
       result[type as ColumnType] = parseInt(colIdx)
     }
-    onConfirm(result)
+    onConfirm(result, preview.headerRowIndex)
   }
 
   return (

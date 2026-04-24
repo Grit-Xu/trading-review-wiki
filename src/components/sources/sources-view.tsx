@@ -334,17 +334,26 @@ export function SourcesView() {
     }
   }
 
-  async function handlePreviewConfirm(mapping: Record<ColumnType, number | null>) {
+  async function handlePreviewConfirm(mapping: Record<ColumnType, number | null>, headerRowIndex: number = 0) {
     if (!pendingImport || !project) return
     setPreviewOpen(false)
     setImporting(true)
 
     try {
       const pp = normalizePath(project.path)
-      const records = parseTradeRecordsWithMapping(pendingImport.rows, mapping)
+      const { records, skipReasons } = parseTradeRecordsWithMapping(pendingImport.rows, mapping, headerRowIndex)
 
       if (records.length === 0) {
-        window.alert("未解析到任何交易记录，请检查列映射是否正确。")
+        // Debug: show first few rows, mapping, and skip reasons to help diagnose
+        const debugRows = pendingImport.rows.slice(headerRowIndex, headerRowIndex + 5)
+          .map((r, i) => `row ${headerRowIndex + i}: ${JSON.stringify(r).slice(0, 200)}`)
+          .join('\n')
+        const debugMapping = Object.entries(mapping)
+          .filter(([_, v]) => v != null)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(', ')
+        const skipSummary = skipReasons.slice(0, 10).join('\n') + (skipReasons.length > 10 ? `\n... 共 ${skipReasons.length} 条跳过记录` : '')
+        window.alert(`未解析到任何交易记录。\n\n映射: ${debugMapping}\n\n前5行:\n${debugRows}\n\n跳过原因(前10条):\n${skipSummary}\n\n请检查浏览器控制台(F12)获取更多日志。`)
         setImporting(false)
         return
       }

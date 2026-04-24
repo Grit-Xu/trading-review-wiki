@@ -29,7 +29,9 @@ interface ReviewState {
   clearResolved: () => void
 }
 
-let counter = 0
+function generateReviewId(): string {
+  return `review-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+}
 
 export const useReviewStore = create<ReviewState>((set) => ({
   items: [],
@@ -40,7 +42,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
         ...state.items,
         {
           ...item,
-          id: `review-${++counter}`,
+          id: generateReviewId(),
           resolved: false,
           createdAt: Date.now(),
         },
@@ -53,7 +55,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
         ...state.items,
         ...items.map((item) => ({
           ...item,
-          id: `review-${++counter}`,
+          id: generateReviewId(),
           resolved: false,
           createdAt: Date.now(),
         })),

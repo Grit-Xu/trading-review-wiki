@@ -132,6 +132,19 @@ function normalizeDate(value: unknown): string {
       return `${y}-${m}-${d}`
     }
   }
+  // Excel serial date as string (Rust backend converts numbers to strings)
+  const serial = str.match(/^(\d{5,6})(\.0+)?$/)
+  if (serial) {
+    const serialNum = parseInt(serial[1], 10)
+    if (serialNum > 30000 && serialNum < 60000) {
+      const epoch = new Date(1899, 11, 30)
+      const d = new Date(epoch.getTime() + serialNum * 86400000)
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, "0")
+      const day = String(d.getDate()).padStart(2, "0")
+      return `${y}-${m}-${day}`
+    }
+  }
   return "" // 无法识别为日期，返回空字符串以便调用方过滤
 }
 
@@ -147,9 +160,9 @@ function parseDirection(value: unknown): TradeRecord["direction"] | null {
   let str = String(value ?? "").trim()
   str = stripExcelFormula(str).toLowerCase()
   // 买入别名
-  if (["买", "买入", "b", "buy", "buyin", "多头", "多", "证券买入", "+", "+1", "正", "1"].includes(str)) return "buy"
+  if (["买", "买入", "b", "buy", "buyin", "多头", "多", "证券买入", "+", "+1", "正", "1", "买入开仓", "买开", "开仓", "开仓买入"].includes(str)) return "buy"
   // 卖出别名（含带 - 号的常见券商格式）
-  if (["卖", "卖出", "s", "sell", "sale", "sellout", "空头", "空", "证券卖出", "-", "-1", "负", "融券卖出", "担保品卖出", "卖出还款", "卖券还款"].includes(str)) return "sell"
+  if (["卖", "卖出", "s", "sell", "sale", "sellout", "空头", "空", "证券卖出", "-", "-1", "负", "融券卖出", "担保品卖出", "卖出还款", "卖券还款", "卖出平仓", "卖平", "平仓", "平仓卖出"].includes(str)) return "sell"
   // 部分券商用 "卖 出" 或 "卖\t出" 等格式
   if (/^卖\s*出?/.test(str)) return "sell"
   if (/^买\s*入?/.test(str)) return "buy"
@@ -363,6 +376,7 @@ export interface ImportPreview {
   sampleRows: unknown[][]
   confidence: number // 整体置信度 0-1
   requiredMissing: ColumnType[] // 缺失的必需字段
+  headerRowIndex: number // 表头行在 rows 中的索引
 }
 
 const REQUIRED_FIELDS: ColumnType[] = ["date", "code", "name"]
@@ -374,6 +388,10 @@ function looksLikeDate(value: unknown): boolean {
   if (!str) return false
   // Excel serial date
   if (typeof value === "number" && value > 30000 && value < 60000) return true
+  // Excel serial date as string (Rust backend converts numbers to strings)
+  if (/^\d{5,6}(\.0+)?$/.test(str)) return true
+  // Compact date YYYYMMDD
+  if (/^\d{8}$/.test(str)) return true
   // Date patterns
   return /(\d{4})[-\/\.年](\d{1,2})[-\/\.月](\d{1,2})/.test(str) ||
     /(\d{2})[-\/\.](\d{1,2})[-\/\.](\d{1,2})/.test(str)
@@ -390,7 +408,7 @@ function looksLikeDirection(value: unknown): boolean {
   const str = String(value).trim().toLowerCase()
   if (!str) return false
   // 中文方向
-  if (/^(买|卖出?|证券买|证券卖|b|s|buy|sell|多|空|正|负|[\+\-]1?)$/.test(str)) return true
+  if (/^(买|买入|卖出?|证券买|证券卖|b|s|buy|sell|多|空|正|负|[\+\-]1?)$/.test(str)) return true
   return false
 }
 
@@ -630,6 +648,7 @@ export function generateImportPreview(rows: unknown[][]): ImportPreview | null {
     sampleRows,
     confidence,
     requiredMissing,
+    headerRowIndex: headerInfo ? headerInfo.rowIndex : 0,
   }
 }
 
@@ -641,31 +660,63 @@ export function parseTradeRecordsWithMapping(
   rows: unknown[][],
   mapping: Record<ColumnType, number | null>,
   headerRowIndex: number = 0
-): TradeRecord[] {
+): { records: TradeRecord[]; skipReasons: string[] } {
   const records: TradeRecord[] = []
+  const skipReasons: string[] = []
+
+  console.log(`[trade-import] parseTradeRecordsWithMapping: headerRowIndex=${headerRowIndex}, rows=${rows.length}`)
+  console.log(`[trade-import] mapping:`, JSON.stringify(mapping))
+  // Log first few rows for debugging
+  for (let i = headerRowIndex; i < Math.min(rows.length, headerRowIndex + 5); i++) {
+    console.log(`[trade-import] row ${i}:`, JSON.stringify(rows[i]))
+  }
+
+  // Only check required columns for row length — optional columns (time, fee, etc.) should not skip the row
+  const requiredCols = [mapping.date, mapping.code, mapping.name, mapping.direction, mapping.quantity, mapping.price, mapping.amount]
+    .filter((c): c is number => c != null)
+  const maxRequiredCol = requiredCols.length > 0 ? Math.max(...requiredCols) : -1
 
   for (let i = headerRowIndex + 1; i < rows.length; i++) {
     const row = rows[i]
-    if (!row || row.length === 0) continue
-    if (row.every((cell) => cell == null || String(cell).trim() === "")) continue
+    if (!row || row.length === 0) {
+      skipReasons.push(`row ${i}: empty row`)
+      continue
+    }
+    if (row.every((cell) => cell == null || String(cell).trim() === "")) {
+      skipReasons.push(`row ${i}: all cells empty`)
+      continue
+    }
+
+    if (maxRequiredCol >= row.length) {
+      const reason = `row ${i}: row.length=${row.length} < maxRequiredCol=${maxRequiredCol}`
+      console.log(`[trade-import] Skip ${reason}`)
+      skipReasons.push(reason)
+      continue
+    }
 
     const dateRaw = row[mapping.date!]
     const date = mapping.date != null ? normalizeDate(stripExcelFormula(String(dateRaw ?? "").trim())) : ""
     if (!date) {
-      console.log(`[trade-import] Skip row ${i}: dateRaw="${dateRaw}" normalized="${date}"`)
+      const reason = `row ${i}: dateRaw="${dateRaw}" normalized="${stripExcelFormula(String(dateRaw ?? "").trim())}"`
+      console.log(`[trade-import] Skip ${reason}`)
+      skipReasons.push(reason)
       continue
     }
 
     const codeRaw = row[mapping.code!]
     let code = mapping.code != null ? stripExcelFormula(String(codeRaw ?? "").trim()) : ""
     if (!code) {
-      console.log(`[trade-import] Skip row ${i}: codeRaw="${codeRaw}"`)
+      const reason = `row ${i}: codeRaw="${codeRaw}"`
+      console.log(`[trade-import] Skip ${reason}`)
+      skipReasons.push(reason)
       continue
     }
 
     let direction: TradeRecord["direction"] | null = null
     if (mapping.direction != null) {
-      direction = parseDirection(row[mapping.direction])
+      const dirRaw = row[mapping.direction]
+      direction = parseDirection(dirRaw)
+      console.log(`[trade-import] Row ${i}: dirRaw="${dirRaw}" parsed="${direction}"`)
     }
 
     // Fallback: 从发生金额推断
@@ -682,7 +733,12 @@ export function parseTradeRecordsWithMapping(
       else if (rawQty > 0) direction = "buy"
     }
 
-    if (direction === null) continue
+    if (direction === null) {
+      const reason = `row ${i}: direction=null after all fallbacks (dirRaw="${mapping.direction != null ? row[mapping.direction] : 'no mapping'}")`
+      console.log(`[trade-import] Skip ${reason}`)
+      skipReasons.push(reason)
+      continue
+    }
 
     const quantity = mapping.quantity != null ? Math.abs(parseNumber(row[mapping.quantity])) : 0
     const price = mapping.price != null ? parseNumber(row[mapping.price]) : 0
@@ -713,7 +769,8 @@ export function parseTradeRecordsWithMapping(
     })
   }
 
-  return records
+  console.log(`[trade-import] parseTradeRecordsWithMapping: parsed ${records.length} records, skipped ${skipReasons.length} rows`)
+  return { records, skipReasons }
 }
 
 function validateParsedRecords(records: TradeRecord[]): ValidationResult {

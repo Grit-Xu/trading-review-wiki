@@ -167,10 +167,36 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
     const pp = normalizePath(project.path)
     setSaving(true)
     try {
-      // Generate slug from first line or first 50 chars
+      // Parse frontmatter if present in content
+      const fmMatch = content.match(/^---\n([\s\S]*?)\n---\n/)
+      let fmType = ""
+      let fmTitle = ""
+      if (fmMatch) {
+        const fm = fmMatch[1]
+        const typeMatch = fm.match(/^type:\s*(.+)$/m)
+        if (typeMatch) fmType = typeMatch[1].trim()
+        const titleMatch = fm.match(/^title:\s*(.+)$/m)
+        if (titleMatch) fmTitle = titleMatch[1].trim().replace(/^["']|["']$/g, "")
+      }
+
+      // Generate title: prefer frontmatter title, then first line heading, then fallback
       const firstLine = content.split("\n")[0].replace(/^#+\s*/, "").trim()
-      const title = firstLine.slice(0, 60) || "Saved Query"
-      const slug = title
+      let title = fmTitle || firstLine.slice(0, 60) || "Saved Query"
+
+      // Detect directory prefix from title like "预测/杰哥下周机会预测"
+      let subDir = "queries"
+      let fileTitle = title
+      if (title.includes("/")) {
+        const parts = title.split("/")
+        subDir = parts[0].trim()
+        fileTitle = parts.slice(1).join("/").trim()
+      } else if (fmType) {
+        // Use frontmatter type as directory (e.g., type: 预测 -> wiki/预测/)
+        subDir = fmType
+      }
+
+      // Sanitize slug for filename
+      const slug = fileTitle
         .toLowerCase()
         .replace(/[^a-z0-9\s-]/g, "")
         .trim()
@@ -179,9 +205,9 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       const date = new Date().toISOString().slice(0, 10)
       const baseFileName = `${slug}-${date}.md`
 
-      // Ensure unique file name to avoid overwriting existing files
-      const queriesDir = await listDirectory(`${pp}/wiki/queries`).catch(() => [] as { name: string; is_dir: boolean }[])
-      const existingNames = new Set(queriesDir.map((n) => n.name))
+      // Ensure unique file name
+      const dirFiles = await listDirectory(`${pp}/wiki/${subDir}`).catch(() => [] as { name: string; is_dir: boolean }[])
+      const existingNames = new Set(dirFiles.map((n) => n.name))
 
       let fileName = baseFileName
       let counter = 1
@@ -190,7 +216,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
         fileName = `${base}-${counter}.md`
         counter++
       }
-      const filePath = `${pp}/wiki/queries/${fileName}`
+      const filePath = `${pp}/wiki/${subDir}/${fileName}`
 
       // Strip hidden sources comment and thinking blocks from content
       const cleanContent = content
@@ -199,35 +225,45 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
         .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "")
         .trimEnd()
 
-      const frontmatter = [
-        "---",
-        `type: query`,
-        `title: "${title.replace(/"/g, '\\"')}"`,
-        `created: ${date}`,
-        `tags: []`,
-        "---",
-        "",
-      ].join("\n")
+      // If content already has frontmatter, keep it; otherwise prepend default frontmatter
+      let finalContent: string
+      if (cleanContent.startsWith("---")) {
+        finalContent = cleanContent
+      } else {
+        const frontmatter = [
+          "---",
+          `type: ${subDir === "queries" ? "query" : subDir}`,
+          `title: "${fileTitle.replace(/"/g, '\\"')}"`,
+          `created: ${date}`,
+          `tags: []`,
+          "---",
+          "",
+        ].join("\n")
+        finalContent = frontmatter + cleanContent
+      }
 
-      await writeFile(filePath, frontmatter + cleanContent)
+      await writeFile(filePath, finalContent)
 
-      // Update index.md — append under ## Queries section
+      // Update index.md — append under matching section or create one
       const indexPath = `${pp}/wiki/index.md`
       let indexContent = ""
       try {
         indexContent = await readFile(indexPath)
       } catch {
-        indexContent = "# Wiki Index\n\n## Queries\n"
+        indexContent = "# Wiki Index\n"
       }
       const wikiLinkName = fileName.replace(/\.md$/, "")
-      const entry = `- [[queries/${wikiLinkName}|${title}]]`
-      if (indexContent.includes("## Queries")) {
+      const sectionTitle = subDir === "queries" ? "Queries" : subDir
+      const sectionHeader = `## ${sectionTitle}`
+      const entry = `- [[${subDir}/${wikiLinkName}|${fileTitle}]]`
+
+      if (indexContent.includes(sectionHeader)) {
         indexContent = indexContent.replace(
-          /(## Queries\n)/,
+          new RegExp(`(${sectionHeader}\\n)`),
           `$1${entry}\n`
         )
       } else {
-        indexContent = indexContent.trimEnd() + "\n\n## Queries\n" + entry + "\n"
+        indexContent = indexContent.trimEnd() + `\n\n${sectionHeader}\n` + entry + "\n"
       }
       await writeFile(indexPath, indexContent)
 
@@ -239,7 +275,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       } catch {
         logContent = "# Wiki Log\n\n"
       }
-      const logEntry = `- ${date}: Saved query page \`${fileName}\`\n`
+      const logEntry = `- ${date}: Saved ${subDir} page \`${fileName}\`\n`
       await writeFile(logPath, logContent.trimEnd() + "\n" + logEntry)
 
       // Refresh file tree and update graph
@@ -252,9 +288,6 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       timerRef.current = setTimeout(() => setSaved(false), 2000)
 
       // Full auto-ingest: extract entities, concepts, cross-references from saved content
-      // Always run auto-ingest so the activity panel shows progress / error feedback.
-      // If LLM is not configured, streamChat will fail gracefully and the activity item
-      // will be marked as error — much better than silently skipping.
       const llmConfig = useWikiStore.getState().llmConfig
       const { autoIngest } = await import("@/lib/ingest")
       autoIngest(pp, filePath, llmConfig).catch((err) =>

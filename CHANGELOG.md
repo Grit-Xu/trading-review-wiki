@@ -4,6 +4,18 @@
 
 ---
 
+## v0.7.6 — 2026-04-25
+
+### 修复（Bug Fix）
+
+- **修复交割单导入预览确认后未解析记录**：`parseTradeRecordsWithMapping` 返回空数组的深层原因修复。
+  - `normalizeDate` 和 `looksLikeDate` 新增对 Excel 序列日期以字符串形式返回的解析（Rust 后端 `calamine` 将数字转为字符串后原函数无法识别）。
+  - `parseDirection` 和 `looksLikeDirection` 补充更多券商方向别名（买入开仓、卖出平仓、平仓等）。
+  - `parseTradeRecordsWithMapping` 的 `maxCol` 检查改为仅检查必需列，避免可选列（如 `time`）导致有效数据行被跳过。
+  - 新增 `skipReasons` 返回，导入失败时弹窗直接展示前 10 条跳过原因，无需打开控制台即可定位问题。
+
+---
+
 ## v0.7.5 — 2026-04-23
 
 ### 修复（Bug Fix）
