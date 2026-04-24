@@ -14,7 +14,10 @@ const DECODER = new TextDecoder()
 const NATIVE_HTTP_TIMEOUT_MS = 15 * 60 * 1000
 
 export function shouldUseNativeHttpForLlm(config: LlmConfig): boolean {
-  return config.provider === "custom"
+  // Only force native HTTP when explicitly requested via a flag or when
+  // fetch streaming is known to fail. By default, custom providers use
+  // standard fetch with ReadableStream for true streaming.
+  return false
 }
 
 export function extractAssistantTextFromResponse(responseText: string): string {

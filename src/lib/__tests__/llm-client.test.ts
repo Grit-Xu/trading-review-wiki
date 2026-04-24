@@ -6,7 +6,9 @@ import {
 } from "@/lib/llm-client"
 
 describe("llm-client native transport selection", () => {
-  it("uses native HTTP for custom providers", () => {
+  it("prefers fetch streaming for all providers by default", () => {
+    // After PR #4 fix verification, we keep native HTTP available as a
+    // fallback but default to fetch ReadableStream for true streaming.
     expect(
       shouldUseNativeHttpForLlm({
         provider: "custom",
@@ -16,7 +18,7 @@ describe("llm-client native transport selection", () => {
         customEndpoint: "https://example.com/v1",
         maxContextSize: 204800,
       }),
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it("does not use native HTTP for standard openai provider", () => {

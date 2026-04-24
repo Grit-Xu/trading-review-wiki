@@ -13,6 +13,7 @@
   - `parseDirection` 和 `looksLikeDirection` 补充更多券商方向别名（买入开仓、卖出平仓、平仓等）。
   - `parseTradeRecordsWithMapping` 的 `maxCol` 检查改为仅检查必需列，避免可选列（如 `time`）导致有效数据行被跳过。
   - 新增 `skipReasons` 返回，导入失败时弹窗直接展示前 10 条跳过原因，无需打开控制台即可定位问题。
+- **恢复 custom provider 流式输出**：PR #4 为修复 custom endpoint 连接问题强制切换为 native HTTP 非流式请求，导致回复一次性返回。现恢复为 `fetch` 流式请求，所有 provider 默认均使用标准 `ReadableStream` 实现逐字输出。
 
 ---
 
