@@ -34,6 +34,7 @@ pub fn run() {
             commands::fs::find_related_wiki_pages,
             commands::fs::create_directory,
             commands::fs::rename_file,
+            commands::http::post_json_via_native_http,
             commands::project::create_project,
             commands::project::open_project,
             clip_server_status,

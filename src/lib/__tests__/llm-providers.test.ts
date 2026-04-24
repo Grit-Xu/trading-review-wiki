@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest"
+import { getProviderConfig } from "@/lib/llm-providers"
 
 // Inline minimal types to avoid store/zustand dependencies in unit tests
 type Provider = "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax"
@@ -96,5 +97,31 @@ describe("MiniMax provider registration", () => {
   it("minimax is a valid provider value in the type union", () => {
     const provider: Provider = "minimax"
     expect(provider).toBe("minimax")
+  })
+})
+
+describe("Custom provider endpoint normalization", () => {
+  it("accepts a base v1 endpoint", () => {
+    const cfg = getProviderConfig(
+      makeConfig({
+        provider: "custom",
+        customEndpoint: "https://example.com/v1",
+        model: "glm-5",
+      }),
+    )
+
+    expect(cfg.url).toBe("https://example.com/v1/chat/completions")
+  })
+
+  it("accepts a full chat completions endpoint without duplicating the suffix", () => {
+    const cfg = getProviderConfig(
+      makeConfig({
+        provider: "custom",
+        customEndpoint: "https://example.com/v1/chat/completions",
+        model: "glm-5",
+      }),
+    )
+
+    expect(cfg.url).toBe("https://example.com/v1/chat/completions")
   })
 })

@@ -13,6 +13,14 @@ interface ProviderConfig {
 }
 
 const JSON_CONTENT_TYPE = "application/json"
+const CHAT_COMPLETIONS_PATH = "/chat/completions"
+
+function normalizeOpenAiCompatibleUrl(endpoint: string): string {
+  const trimmed = endpoint.replace(/\/$/, "")
+  return trimmed.endsWith(CHAT_COMPLETIONS_PATH)
+    ? trimmed
+    : `${trimmed}${CHAT_COMPLETIONS_PATH}`
+}
 
 function parseOpenAiLine(line: string): string | null {
   if (!line.startsWith("data: ")) return null
@@ -181,7 +189,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
 
     case "custom":
       return {
-        url: `${customEndpoint}/chat/completions`,
+        url: normalizeOpenAiCompatibleUrl(customEndpoint),
         headers: {
           "Content-Type": JSON_CONTENT_TYPE,
           ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
