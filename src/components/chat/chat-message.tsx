@@ -558,10 +558,10 @@ function extractCitedPages(text: string): CitedPage[] {
     const WIKI_DIRS = ["entities", "concepts", "sources", "queries", "synthesis", "comparisons"]
 
     for (const link of wikilinks) {
-      const nameMatch = link.match(/\[\[[^\]|]+?(?:\|([^\]]+?))?\]\]/)
+      const nameMatch = link.match(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/)
       if (nameMatch) {
-        const id = nameMatch[1].trim()
-        const display = nameMatch[2]?.trim() || id
+        const id = (nameMatch[1] ?? "").trim()
+        const display = (nameMatch[2] ?? "").trim() || id
 
         // Skip if id contains path separators (already a path like queries/xxx)
         if (seen.has(id)) continue
