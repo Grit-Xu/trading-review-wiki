@@ -248,7 +248,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
           .replace(/^-+|-+$/g, "")          // trim leading/trailing hyphens
           .slice(0, 50)
         const safeSlug = slug || "untitled"
-        const baseFileName = `${safeSlug}-${date}.md`
+        const baseFileName = `${safeSlug}.md`
 
         // Ensure target directory exists
         try {
@@ -257,27 +257,65 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
           // Directory may already exist, ignore error
         }
 
-        // Ensure unique file name (disk + batch)
+        // Check if file already exists on disk for appending
         const dirFiles = await listDirectory(`${pp}/wiki/${subDir}`).catch(() => [] as { name: string; is_dir: boolean }[])
         const diskNames = new Set(dirFiles.map((n) => n.name))
         const batchNames = batchCreatedNames.get(subDir) || new Set<string>()
-        const existingNames = new Set([...diskNames, ...batchNames])
 
         let fileName = baseFileName
         let counter = 1
-        while (existingNames.has(fileName)) {
-          const base = baseFileName.replace(/\.md$/, "")
-          fileName = `${base}-${counter}.md`
-          counter++
+        // If base file was already processed in this batch, always use it for appending
+        // (don't create -1, -2 variants when appending to existing file)
+        if (batchNames.has(baseFileName)) {
+          fileName = baseFileName
+        } else {
+          // Only add counter for truly new files that conflict with disk
+          while (diskNames.has(fileName)) {
+            const base = baseFileName.replace(/\.md$/, "")
+            fileName = `${base}-${counter}.md`
+            counter++
+          }
         }
         batchNames.add(fileName)
         batchCreatedNames.set(subDir, batchNames)
 
         const filePath = `${pp}/wiki/${subDir}/${fileName}`
 
-        // If page has frontmatter, reconstruct full content; otherwise prepend default frontmatter
+        // Check if file already exists — if so, append body and update `updated` date
+        let existingContent = ""
+        let existingFrontmatter: Record<string, string> = {}
+        try {
+          existingContent = await readFile(filePath)
+          const fmMatch = existingContent.match(/^---\n([\s\S]*?)\n---\n/)
+          if (fmMatch) {
+            fmMatch[1].split("\n").forEach((line) => {
+              const m = line.match(/^([^:]+):\s*(.*)$/)
+              if (m) existingFrontmatter[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, "")
+            })
+          }
+        } catch {
+          // File doesn't exist yet
+        }
+
         let finalContent: string
-        if (page.frontmatter) {
+        if (existingContent) {
+          // Append new body to existing content, update updated date
+          const existingBody = existingContent.replace(/^---\n[\s\S]*?\n---\n/, "")
+          const mergedFrontmatter = [
+            "---",
+            `type: ${existingFrontmatter.type || (subDir === "queries" ? "query" : subDir)}`,
+            `title: "${(existingFrontmatter.title || fileTitle).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
+            `created: ${existingFrontmatter.created || date}`,
+            `updated: ${date}`,
+            `tags: ${existingFrontmatter.tags || "[]"}`,
+            `sources: ${existingFrontmatter.sources || "0"}`,
+            `status: ${existingFrontmatter.status || "活跃"}`,
+            "---",
+            "",
+          ].join("\n")
+          const now = new Date().toISOString().slice(0, 16).replace("T", " ")
+          finalContent = mergedFrontmatter + existingBody.trimEnd() + "\n\n---\n\n## 更新于 " + now + "\n\n" + page.body
+        } else if (page.frontmatter) {
           finalContent = `---\n${page.frontmatter}\n---\n${page.body}`
         } else {
           const frontmatter = [
@@ -285,7 +323,10 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
             `type: ${subDir === "queries" ? "query" : subDir}`,
             `title: "${fileTitle.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
             `created: ${date}`,
+            `updated: ${date}`,
             `tags: []`,
+            `sources: 0`,
+            `status: 活跃`,
             "---",
             "",
           ].join("\n")
@@ -330,6 +371,8 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
           indexContent = "# Wiki Index\n"
         }
         for (const { sectionHeader, entry } of indexEntries) {
+          // Skip if this entry already exists in index
+          if (indexContent.includes(entry)) continue
           if (indexContent.includes(sectionHeader)) {
             // Escape special regex chars in sectionHeader for safe RegExp construction
             const escapedHeader = sectionHeader.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -366,9 +409,10 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       }
       setSaved(true)
       if (timerRef.current) clearTimeout(timerRef.current)
-      timerRef.current = setTimeout(() => setSaved(false), 3000)
+      timerRef.current = setTimeout(() => setSaved(false), 5000)
     } catch (err) {
       console.error("Failed to save to wiki:", err)
+      alert(`保存失败: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setSaving(false)
     }
@@ -833,11 +877,11 @@ function processContent(text: string): string {
 
   // Convert [[wikilinks]] to markdown links
   result = result.replace(
-    /\[\[[^\]|]+?(?:\|([^\]]+?))?\]\]/g,
+    /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g,
     (_match, pageName: string | undefined, displayText?: string) => {
-      const pn = pageName ?? ""
-      const display = displayText?.trim() || pn.trim()
-      return `[${display}](wikilink:${pn.trim()})`
+      const pn = (pageName ?? "").trim()
+      const display = (displayText ?? "").trim() || pn
+      return `[${display}](wikilink:${pn})`
     },
   )
 

@@ -5,9 +5,51 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Trading Review Wiki | 交易复盘 Wiki</title>
+    <script>
+      window.__FATAL_ERRORS = [];
+      window.addEventListener('error', function(e) {
+        window.__FATAL_ERRORS.push({type:'error', msg: e.error?.message || e.message, stack: e.error?.stack});
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        window.__FATAL_ERRORS.push({type:'rejection', msg: e.reason?.message || String(e.reason), stack: e.reason?.stack});
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <div id="global-error" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0a0a0a;color:#e5e5e5;font-family:monospace;font-size:12px;z-index:99999;overflow:auto;padding:20px;white-space:pre-wrap;"></div>
+    <script>
+      (function() {
+        var errDiv = document.getElementById('global-error');
+        function showError(title, msg, stack) {
+          if (errDiv) {
+            errDiv.style.display = 'block';
+            errDiv.textContent = (errDiv.textContent || '') + '\n\n' + title + ': ' + msg + '\n' + (stack || '');
+          }
+        }
+        window.addEventListener('error', function(e) {
+          showError('GLOBAL ERROR', e.error?.message || e.message || String(e.error), e.error?.stack);
+        });
+        window.addEventListener('unhandledrejection', function(e) {
+          showError('UNHANDLED REJECTION', e.reason?.message || String(e.reason), e.reason?.stack);
+        });
+        var origError = console.error;
+        console.error = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var msg = args.map(function(a) { return typeof a === 'string' ? a : JSON.stringify(a); }).join(' ');
+          if (msg.includes('trim') || msg.includes('Something went wrong') || msg.includes('Error:')) {
+            showError('CONSOLE ERROR', msg, '');
+          }
+          origError.apply(console, arguments);
+        };
+        // Also show any errors captured before this script ran
+        if (window.__FATAL_ERRORS && window.__FATAL_ERRORS.length) {
+          window.__FATAL_ERRORS.forEach(function(e) {
+            showError('EARLY ' + e.type.toUpperCase(), e.msg, e.stack);
+          });
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
