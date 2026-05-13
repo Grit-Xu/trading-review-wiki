@@ -18,7 +18,7 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: '--x86_64-apple-darwin'
+            args: ''
             rust_target: 'x86_64-apple-darwin'
           - platform: ubuntu-22.04
             args: ''
@@ -87,5 +87,5 @@ jobs:
           releaseBody: 'See [CHANGELOG](../../blob/main/CHANGELOG.md) for full release notes.'
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.args }}
+      
 
