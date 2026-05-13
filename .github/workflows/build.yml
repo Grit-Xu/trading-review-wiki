@@ -18,13 +18,10 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: ''
             rust_target: 'x86_64-apple-darwin'
           - platform: ubuntu-22.04
-            args: ''
             rust_target: ''
           - platform: windows-latest
-            args: ''
             rust_target: ''
 
     runs-on: ${{ matrix.platform }}
