@@ -18,8 +18,8 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: '--target universal-apple-darwin'
-            rust_target: 'aarch64-apple-darwin,x86_64-apple-darwin'
+            args: '--x86_64-apple-darwin'
+            rust_target: 'x86_64-apple-darwin'
           - platform: ubuntu-22.04
             args: ''
             rust_target: ''
@@ -65,7 +65,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install frontend dependencies
         run: npm install
