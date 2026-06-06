@@ -119,7 +119,7 @@ function normalizeFrontmatter(raw: Record<string, unknown>): WikiFrontmatter {
 
   // Set default volatility based on type
   if (!data.volatility && data.type) {
-    data.volatility = DEFAULT_VOLATILITY_BY_TYPE[String(data.type)] ?? "mid"
+    data.volatility = DEFAULT_VOLATILITY_BY_TYPE[String(data.type).toLowerCase()] ?? "mid"
   }
 
   // Ensure arrays

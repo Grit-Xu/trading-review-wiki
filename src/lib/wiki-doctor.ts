@@ -191,7 +191,8 @@ export async function scanWiki(wikiPath: string): Promise<DoctorIssue[]> {
         const content = await readFile(f.path)
         const fm = extractFrontmatterData(content)
         if (fm?.type && typeof fm.type === "string") {
-          typed.push(`${f.name} → ${DIR_TYPE_MAP[fm.type] ?? fm.type}/`)
+          const typeKey = fm.type.trim().toLowerCase()
+          typed.push(`${f.name} → ${DIR_TYPE_MAP[typeKey] ?? typeKey}/`)
         } else {
           untyped.push(f.name)
         }

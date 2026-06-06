@@ -137,7 +137,7 @@ function extractTitle(content: string, fileName: string): string {
 }
 
 function extractType(content: string): string {
-  const frontmatterTypeMatch = content.match(/^---\n[\s\S]*?^type:\s*["']?(.+?)["']?\s*$/m)
+  const frontmatterTypeMatch = content.match(/^---\r?\n[\s\S]*?^type:\s*["']?(.+?)["']?\s*$/m)
   if (frontmatterTypeMatch) return frontmatterTypeMatch[1].trim().toLowerCase()
   return "other"
 }
