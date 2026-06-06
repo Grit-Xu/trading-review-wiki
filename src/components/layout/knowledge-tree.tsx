@@ -274,7 +274,7 @@ function parsePageInfo(path: string, fileName: string, content: string): WikiPag
   if (fmMatch) {
     const fm = fmMatch[1]
     const typeMatch = fm.match(/^type:\s*(.+)$/m)
-    if (typeMatch) type = typeMatch[1].trim()
+    if (typeMatch) type = typeMatch[1].trim().toLowerCase()
 
     const titleMatch = fm.match(/^title:\s*["']?(.+?)["']?\s*$/m)
     if (titleMatch) title = titleMatch[1].trim()
@@ -299,7 +299,7 @@ function parsePageInfo(path: string, fileName: string, content: string): WikiPag
     // Extract subdirectory under /wiki/ (e.g. /wiki/日复盘/xxx.md → "日复盘")
     const wikiDirMatch = path.match(/\/wiki\/([^/]+)\//)
     if (wikiDirMatch) {
-      type = wikiDirMatch[1]
+      type = wikiDirMatch[1].toLowerCase()
     } else if (fileName === "overview.md") {
       type = "overview"
     }
