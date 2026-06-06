@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react"
+import { confirm } from "@tauri-apps/plugin-dialog"
 import {
   Link2Off,
   Unlink,
@@ -184,7 +185,7 @@ export function LintView() {
     if (!project) return
     const pp = normalizePath(project.path)
     const pagePath = `${pp}/wiki/${result.page}`
-    const confirmed = window.confirm(`删除孤立页面 "${result.page}"？`)
+    const confirmed = await confirm(`删除孤立页面 "${result.page}"？`, { title: "Trading Review Wiki", kind: "warning" })
     if (!confirmed) return
 
     try {
