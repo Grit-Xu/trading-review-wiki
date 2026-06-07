@@ -138,8 +138,27 @@ function extractTitle(content: string, fileName: string): string {
 
 function extractType(content: string): string {
   const frontmatterTypeMatch = content.match(/^---\r?\n[\s\S]*?^type:\s*["']?(.+?)["']?\s*$/m)
-  if (frontmatterTypeMatch) return frontmatterTypeMatch[1].trim().toLowerCase()
+  if (frontmatterTypeMatch) {
+    const rawType = frontmatterTypeMatch[1].trim().toLowerCase()
+    return TYPE_SYNONYMS_GRAPH[rawType] ?? rawType
+  }
   return "other"
+}
+
+// Subset of synonyms for graph type normalization
+const TYPE_SYNONYMS_GRAPH: Record<string, string> = {
+  "概念": "concept",
+  "concepts": "concept",
+  "实体": "entity",
+  "entities": "entity",
+  "对比": "comparison",
+  "comparisons": "comparison",
+  "问题": "query",
+  "queries": "query",
+  "综合": "synthesis",
+  "原始资料": "source",
+  "sources": "source",
+  "概览": "overview",
 }
 
 function extractWikilinks(content: string): string[] {

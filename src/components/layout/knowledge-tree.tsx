@@ -362,6 +362,7 @@ const TYPE_SYNONYMS: Record<string, string> = {
   "comparison": "对比",
   "comparisons": "对比",
   "synthesis": "综合",
+  "overview": "概览",
   "index": "索引",
   // Chinese aliases (different spellings of same thing)
   "错误总结": "错误",
