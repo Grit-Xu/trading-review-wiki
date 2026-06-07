@@ -252,13 +252,13 @@ async function processNext(projectPath: string): Promise<void> {
   const pp = normalizePath(projectPath)
   const llmConfig = useWikiStore.getState().llmConfig
 
-  // Check if LLM is configured
+  // Check if LLM is configured — stay pending if not, so tasks retry when LLM becomes available
   if (!llmConfig.apiKey && llmConfig.provider !== "ollama" && llmConfig.provider !== "custom") {
-    next.status = "failed"
-    next.error = "LLM not configured — set API key in Settings"
+    next.status = "pending"  // keep pending so it retries when LLM is configured
+    next.error = "LLM not configured — waiting for API key"
     processing = false
     await saveQueue(pp)
-    processNext(pp)
+    // Don't recurse immediately to avoid busy-looping; next project open or settings save will retrigger
     return
   }
 

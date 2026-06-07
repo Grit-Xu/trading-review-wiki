@@ -165,6 +165,16 @@ function App() {
     } catch (err) {
       console.warn("[App] Failed to load chat history:", err)
     }
+    // Scan for uningested sources if LLM is configured
+    try {
+      const { enqueueUningestedSources } = await import("@/lib/ingest-queue")
+      const count = await enqueueUningestedSources(proj.path)
+      if (count > 0) {
+        console.log(`[App] Enqueued ${count} uningested source files`)
+      }
+    } catch (err) {
+      console.warn("[App] Failed to scan uningested sources:", err)
+    }
   }
 
   async function handleSelectRecent(proj: WikiProject) {
