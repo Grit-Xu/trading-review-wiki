@@ -13,7 +13,7 @@ import { startClipWatcher, stopClipWatcher } from "@/lib/clip-watcher"
 import { AppLayout } from "@/components/layout/app-layout"
 import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
-import type { WikiProject } from "@/types/wiki"
+import type { WikiProject, FileNode } from "@/types/wiki"
 
 function App() {
   const project = useWikiStore((s) => s.project)
@@ -141,7 +141,7 @@ function App() {
     }).catch((err) => console.warn("[App] Failed to get clip server token:", err))
     try {
       const tree = await listDirectory(proj.path)
-      setFileTree(tree)
+      setFileTree(dedupFileTree(tree))
     } catch (err) {
       console.error("Failed to load file tree:", err)
     }
@@ -239,6 +239,30 @@ function App() {
       />
     </>
   )
+}
+
+/**
+ * Recursively deduplicate file tree: in each directory, remove files whose
+ * "base name" (stripping parenthesized suffixes like stock codes) matches
+ * another file already in the tree.
+ */
+function dedupFileTree(nodes: FileNode[]): FileNode[] {
+  return nodes
+    .map((node) => {
+      if (node.is_dir && node.children) {
+        return { ...node, children: dedupFileTree(node.children) }
+      }
+      return node
+    })
+    .filter((node, index, arr) => {
+      if (node.is_dir) return true
+      const base = node.name.replace(/\s*\([^)]*\)/, "").toLowerCase()
+      // Keep first occurrence of each base name
+      const firstIdx = arr.findIndex(
+        (n) => !n.is_dir && n.name.replace(/\s*\([^)]*\)/, "").toLowerCase() === base
+      )
+      return index === firstIdx
+    })
 }
 
 export default App
