@@ -248,6 +248,20 @@ async function writeFileBlocks(
     if (!relativePath) continue
 
     const fullPath = `${projectPath}/${relativePath}`
+
+    // Skip duplicate files: check if a file with same "base name" already exists
+    // e.g. "中国长城 (000066).md" would be skipped if "中国长城.md" already exists
+    if (!relativePath.includes("log.md") && !relativePath.includes("index.md")) {
+      const dir = fullPath.substring(0, fullPath.lastIndexOf("/"))
+      const fileName = fullPath.substring(fullPath.lastIndexOf("/") + 1)
+      const baseName = fileName.replace(/\s*\([^)]*\)\s*/, "").replace(".md", "")
+      const exists = await findExistingFile(dir, baseName)
+      if (exists && exists !== fullPath) {
+        console.log(`[Ingest] Skipping duplicate: ${fileName} (similar to ${exists.split("/").pop()})`)
+        continue
+      }
+    }
+
     try {
       if (relativePath === "wiki/log.md" || relativePath.endsWith("/log.md")) {
         const existing = await tryReadFile(fullPath)
@@ -263,6 +277,29 @@ async function writeFileBlocks(
   }
 
   return writtenPaths
+}
+
+/**
+ * Check if a directory contains a file whose base name matches the given base name.
+ * Base name comparison strips parenthesized suffixes like stock codes.
+ * Returns the full path of the existing file, or null.
+ */
+async function findExistingFile(dir: string, baseName: string): Promise<string | null> {
+  try {
+    const entries = await listDirectory(dir)
+    for (const entry of entries) {
+      if (entry.is_dir) continue
+      const entryBase = entry.name
+        .replace(/\s*\([^)]*\)\s*/, "")
+        .replace(".md", "")
+      if (entryBase.toLowerCase() === baseName.toLowerCase()) {
+        return entry.path
+      }
+    }
+  } catch {
+    // Directory doesn't exist yet, no duplicates possible
+  }
+  return null
 }
 
 const REVIEW_BLOCK_REGEX = /---REVIEW:\s*(\w[\w-]*)\s*\|\s*(.+?)\s*---\n([\s\S]*?)---END REVIEW---/g

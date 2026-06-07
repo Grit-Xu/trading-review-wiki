@@ -18,6 +18,7 @@ interface WikiPageInfo {
   origin?: string
   confidence?: number
   status?: string
+  displayTitle?: string // disambiguated title for duplicates
 }
 
 // Dynamic icon/color palette — cycles through for each unique type discovered at runtime
@@ -101,13 +102,35 @@ export function KnowledgeTree() {
     loadPages()
   }, [loadPages, fileTree])
 
-  // Group pages by type and derive dynamic configs
+  // Group pages by type and derive dynamic configs; deduplicate titles
   const { sortedGroups } = useMemo(() => {
     const grouped = new Map<string, WikiPageInfo[]>()
     for (const page of pages) {
       const list = grouped.get(page.type) ?? []
       list.push(page)
       grouped.set(page.type, list)
+    }
+
+    // For each group, detect duplicate titles and create disambiguated display names
+    for (const [, items] of grouped) {
+      const titleCount = new Map<string, number>()
+      for (const p of items) {
+        titleCount.set(p.title, (titleCount.get(p.title) ?? 0) + 1)
+      }
+      for (const p of items) {
+        if ((titleCount.get(p.title) ?? 0) > 1) {
+          // Duplicate title: append filename hint to distinguish
+          const fileName = p.path.split("/").pop()?.replace(".md", "") ?? p.title
+          // Only add hint if filename differs from title
+          if (fileName !== p.title && fileName !== p.title.replace(/\s+/g, "-")) {
+            p.displayTitle = `${p.title} (${fileName.substring(0, 30)})`
+          } else {
+            p.displayTitle = p.title
+          }
+        } else {
+          p.displayTitle = p.title
+        }
+      }
     }
 
     // Sort: "other" always last, then alphabetically by type name
@@ -189,7 +212,7 @@ export function KnowledgeTree() {
                         title={page.path}
                       >
                         {page.origin === "web-clip" && <Globe className="h-3 w-3 shrink-0 text-blue-400" />}
-                        <span className="truncate">{page.title}</span>
+                        <span className="truncate" title={page.path}>{page.displayTitle ?? page.title}</span>
                       </button>
                     )
                   })}
