@@ -121,13 +121,11 @@ export function SourcesView() {
     setImporting(false)
     await loadSources()
 
-    // Enqueue for serial ingest (runs in background via ingest queue)
-    if (llmConfig.apiKey || llmConfig.provider === "ollama" || llmConfig.provider === "custom") {
-      for (const destPath of importedPaths) {
-        enqueueIngest(pp, destPath).catch((err) =>
-          console.error(`Failed to enqueue ingest:`, err)
-        )
-      }
+    // Enqueue for serial ingest — always enqueue; queue handles LLM availability
+    for (const destPath of importedPaths) {
+      enqueueIngest(pp, destPath).catch((err) =>
+        console.error(`Failed to enqueue ingest:`, err)
+      )
     }
   }
 

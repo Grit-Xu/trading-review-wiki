@@ -86,12 +86,31 @@ export function SettingsView() {
     const newConfig = { provider, apiKey, model, ollamaUrl, customEndpoint, maxContextSize }
     const newSearchConfig = { provider: searchProvider, apiKey: searchApiKey }
     const newEmbeddingConfig = { enabled: embeddingEnabled, endpoint: embeddingEndpoint, apiKey: embeddingApiKey, model: embeddingModel }
+
+    // Detect if LLM was previously unconfigured and is now becoming configured
+    const wasUnconfigured = !llmConfig.apiKey && llmConfig.provider !== "ollama" && llmConfig.provider !== "custom"
+    const isNowConfigured = apiKey || provider === "ollama" || provider === "custom"
+
     setSearchApiConfig(newSearchConfig)
     await saveSearchApiConfig(newSearchConfig)
     setEmbeddingConfig(newEmbeddingConfig)
     await saveEmbeddingConfig(newEmbeddingConfig)
     setLlmConfig(newConfig)
     await saveLlmConfig(newConfig)
+
+    // If LLM just became configured, scan existing sources for ingest
+    if (wasUnconfigured && isNowConfigured) {
+      const project = useWikiStore.getState().project
+      if (project) {
+        const { enqueueUningestedSources } = await import("@/lib/ingest-queue")
+        enqueueUningestedSources(project.path).then((count) => {
+          if (count > 0) {
+            console.log(`[Settings] Enqueued ${count} previously uningested source files`)
+          }
+        }).catch((err) => console.warn("[Settings] Failed to enqueue uningested sources:", err))
+      }
+    }
+
     setSaved(true)
     if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
     savedTimerRef.current = setTimeout(() => setSaved(false), 2000)

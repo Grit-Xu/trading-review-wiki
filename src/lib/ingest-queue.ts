@@ -305,3 +305,51 @@ async function processNext(projectPath: string): Promise<void> {
   processing = false
   processNext(pp)
 }
+
+/**
+ * Scan raw/sources/ for files that haven't been enqueued for ingest yet.
+ * Useful when LLM was configured after files were already imported.
+ */
+export async function enqueueUningestedSources(projectPath: string): Promise<number> {
+  const pp = normalizePath(projectPath)
+  const { listDirectory } = await import("@/commands/fs")
+
+  // Get all enqueued source paths (including completed/failed)
+  const enqueuedPaths = new Set(queue.map((t) => t.sourcePath))
+
+  let count = 0
+  try {
+    const sourcesDir = `${pp}/raw/sources`
+    const entries = await listDirectory(sourcesDir)
+
+    const files = flattenSourcesTree(entries)
+    for (const file of files) {
+      if (file.is_dir) continue
+      const sourcePath = file.path
+      if (enqueuedPaths.has(sourcePath)) continue
+
+      // Skip non-ingestible files (images, media, etc.)
+      const ext = file.name.split(".").pop()?.toLowerCase() ?? ""
+      if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "mp4", "webm", "mov", "mp3", "wav"].includes(ext)) continue
+
+      await enqueueIngest(projectPath, sourcePath)
+      count++
+    }
+  } catch {
+    // Directory might not exist yet
+  }
+
+  return count
+}
+
+function flattenSourcesTree(nodes: any[]): any[] {
+  const files: any[] = []
+  for (const node of nodes) {
+    if (node.is_dir && node.children) {
+      files.push(...flattenSourcesTree(node.children))
+    } else {
+      files.push(node)
+    }
+  }
+  return files
+}
