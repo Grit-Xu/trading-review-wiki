@@ -759,6 +759,9 @@ function countFiles(nodes: FileNode[]): number {
   return count
 }
 
+// Persist folder expand state across view switches (module-level, lives as long as app)
+const expandedFolders = new Set<string>()
+
 function SourceTree({
   nodes,
   onOpen,
@@ -774,11 +777,16 @@ function SourceTree({
   ingestingPath: string | null
   depth: number
 }) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
-
   const toggle = (path: string) => {
-    setCollapsed((prev) => ({ ...prev, [path]: !prev[path] }))
+    if (expandedFolders.has(path)) {
+      expandedFolders.delete(path)
+    } else {
+      expandedFolders.add(path)
+    }
+    // Trigger re-render via a dummy state
+    setTick((t) => t + 1)
   }
+  const [, setTick] = useState(0)
 
   // Sort: folders first, then files, alphabetical within each group
   const sorted = [...nodes].sort((a, b) => {
@@ -791,7 +799,7 @@ function SourceTree({
     <>
       {sorted.map((node) => {
         if (node.is_dir && node.children) {
-          const isCollapsed = collapsed[node.path] ?? false
+          const isExpanded = expandedFolders.has(node.path)
           return (
             <div key={node.path}>
               <button
@@ -799,10 +807,10 @@ function SourceTree({
                 className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 style={{ paddingLeft: `${depth * 16 + 4}px` }}
               >
-                {isCollapsed ? (
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                ) : (
+                {isExpanded ? (
                   <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0" />
                 )}
                 <Folder className="h-4 w-4 shrink-0 text-amber-500" />
                 <span className="truncate font-medium">{node.name}</span>
@@ -810,7 +818,7 @@ function SourceTree({
                   {countFiles(node.children)}
                 </span>
               </button>
-              {!isCollapsed && (
+              {isExpanded && (
                 <SourceTree
                   nodes={node.children}
                   onOpen={onOpen}
