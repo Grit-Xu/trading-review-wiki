@@ -297,7 +297,7 @@ function parsePageInfo(path: string, fileName: string, content: string): WikiPag
   if (fmMatch) {
     const fm = fmMatch[1]
     const typeMatch = fm.match(/^type:\s*(.+)$/m)
-    if (typeMatch) type = typeMatch[1].trim().toLowerCase()
+    if (typeMatch) type = normalizeType(typeMatch[1].trim().toLowerCase())
 
     const titleMatch = fm.match(/^title:\s*["']?(.+?)["']?\s*$/m)
     if (titleMatch) title = titleMatch[1].trim()
@@ -322,13 +322,55 @@ function parsePageInfo(path: string, fileName: string, content: string): WikiPag
     // Extract subdirectory under /wiki/ (e.g. /wiki/日复盘/xxx.md → "日复盘")
     const wikiDirMatch = path.match(/\/wiki\/([^/]+)\//)
     if (wikiDirMatch) {
-      type = wikiDirMatch[1].toLowerCase()
+      type = normalizeType(wikiDirMatch[1].toLowerCase())
     } else if (fileName === "overview.md") {
       type = "overview"
     }
   }
 
+  type = normalizeType(type)
+
   return { path, title, type, tags, origin }
+}
+
+/**
+ * Normalize type names: merge Chinese/English synonyms into canonical form.
+ * Canonical form preference: Chinese (matching the app's primary language).
+ */
+const TYPE_SYNONYMS: Record<string, string> = {
+  // Chinese ← English
+  "stock": "股票",
+  "stocks": "股票",
+  "strategy": "策略",
+  "strategies": "策略",
+  "pattern": "模式",
+  "patterns": "模式",
+  "mistake": "错误",
+  "mistakes": "错误",
+  "market": "市场环境",
+  "market-environment": "市场环境",
+  "evolution": "进化",
+  "summary": "总结",
+  "concept": "概念",
+  "concepts": "概念",
+  "entity": "实体",
+  "entities": "实体",
+  "source": "原始资料",
+  "sources": "原始资料",
+  "query": "问题",
+  "queries": "问题",
+  "comparison": "对比",
+  "comparisons": "对比",
+  "synthesis": "综合",
+  "index": "索引",
+  // Chinese aliases (different spellings of same thing)
+  "错误总结": "错误",
+  "市场总结": "市场环境",
+  "source-summary": "原始资料",
+}
+
+function normalizeType(raw: string): string {
+  return TYPE_SYNONYMS[raw] ?? raw
 }
 
 function flattenMdFiles(nodes: FileNode[]): FileNode[] {
