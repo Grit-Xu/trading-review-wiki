@@ -12,6 +12,270 @@ const FILE_BLOCK_REGEX = /---FILE:\s*([^\n-]+?)\s*---\n([\s\S]*?)---END FILE---/
 
 export const LANGUAGE_RULE = "## Language Rule\n- ALWAYS match the language of the source document. If the source is in Chinese, write in Chinese. If in English, write in English. Wiki page titles, content, and descriptions should all be in the same language as the source material."
 
+// ── Path Validation ──────────────────────────────────────────
+
+/** English directory → Chinese canonical directory (for path redirection) */
+const PATH_REDIRECT_MAP: Record<string, string> = {
+  "entities": "股票",
+  "entity": "股票",
+  "concepts": "概念",
+  "concept": "概念",
+  "sources": "原始资料",
+  "source": "原始资料",
+  "queries": "问题",
+  "query": "问题",
+  "comparisons": "对比",
+  "comparison": "对比",
+  "synthesis": "综合",
+  "stock": "股票",
+  "stocks": "股票",
+  "strategy": "策略",
+  "strategies": "策略",
+  "pattern": "模式",
+  "patterns": "模式",
+  "mistake": "错误",
+  "mistakes": "错误",
+  "market": "市场环境",
+  "market-environment": "市场环境",
+  "evolution": "进化",
+  "prediction": "预测",
+  "predictions": "预测",
+}
+
+/** Directories that are known to be temp/scaffold and must be rejected */
+const TEMP_DIR_PATTERNS = [
+  /更新核心页面/i,
+  /临时/i,
+  /temp/i,
+  /tmp\b/i,
+  /draft/i,
+  /scaffold/i,
+]
+
+/** Maximum filename length (excluding extension) */
+const MAX_FILENAME_LENGTH = 40
+
+/**
+ * Validate and sanitize a wiki file path produced by the LLM.
+ * Returns null if the path should be rejected entirely.
+ */
+function sanitizeWikiPath(rawPath: string, frontmatterTitle?: string): string | null {
+  // Normalize slashes
+  let path = rawPath.replace(/\\/g, "/").trim()
+
+  // Must start with wiki/
+  if (!path.startsWith("wiki/")) return null
+
+  // Split into parts
+  const parts = path.split("/")
+  if (parts.length < 2) return null
+
+  // Check for temp dir patterns in any segment
+  for (const part of parts) {
+    for (const pattern of TEMP_DIR_PATTERNS) {
+      if (pattern.test(part)) return null
+    }
+  }
+
+  // Redirect English directory names to Chinese
+  const dirName = parts[1]
+  const canonicalDir = PATH_REDIRECT_MAP[dirName]
+  if (canonicalDir) {
+    parts[1] = canonicalDir
+  }
+
+  // Sanitize filename (last part)
+  if (parts.length >= 3) {
+    let fileName = parts[parts.length - 1]
+    const ext = fileName.endsWith(".md") ? ".md" : ""
+    const stem = fileName.replace(/\.md$/i, "")
+
+    // If filename is obviously AI-generated text (too long, contains quotes, etc.),
+    // try to use the frontmatter title instead
+    const needsSanitize =
+      stem.length > MAX_FILENAME_LENGTH ||
+      /[""''《》「」【】]/.test(stem) ||
+      /^[，。！？,\.!\?]/.test(stem) // starts with punctuation
+
+    if (needsSanitize && frontmatterTitle) {
+      // Use frontmatter title as filename, stripped of special chars
+      let safeName = frontmatterTitle
+        .replace(/[""''《》「」【】]/g, "")
+        .replace(/[\\/:*?"<>|]/g, "-")
+        .replace(/\s+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "")
+      if (safeName.length > MAX_FILENAME_LENGTH) {
+        safeName = safeName.slice(0, MAX_FILENAME_LENGTH)
+      }
+      if (safeName) {
+        fileName = safeName + ext
+      } else {
+        // Fallback: just truncate the original
+        fileName = stem.slice(0, MAX_FILENAME_LENGTH).replace(/[\\/:*?"<>|]/g, "-") + ext
+      }
+    } else if (stem.length > MAX_FILENAME_LENGTH) {
+      // Truncate long filenames
+      fileName = stem.slice(0, MAX_FILENAME_LENGTH) + ext
+    }
+
+    parts[parts.length - 1] = fileName
+  }
+
+  return parts.join("/")
+}
+
+/**
+ * Extract the title from YAML frontmatter content.
+ */
+function extractFrontmatterTitle(content: string): string | null {
+  const match = content.match(/^---\r?\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m)
+  return match ? match[1].trim() : null
+}
+
+/**
+ * Normalize tags in frontmatter to yaml multiline format.
+ * Converts: tags: [x, y, z] → tags:\n  - x\n  - y\n  - z
+ * Converts: tags: [] → tags: [] (kept empty)
+ */
+function normalizeTags(content: string): string {
+  // Match tags in various formats:
+  // tags: [a, b, c]
+  // tags: ['a', 'b', 'c']
+  // tags: ["a", "b", "c"]
+  const inlineTagsRegex = /^(\s*tags:\s*)\[([^\]]*)\]\s*$/m
+  const match = content.match(inlineTagsRegex)
+  if (!match) return content
+
+  const indent = match[1].replace(/tags:.*/, "") // preserve indentation
+  const tagsContent = match[2].trim()
+
+  if (!tagsContent) {
+    // Empty tags — already fine as `tags: []`
+    return content
+  }
+
+  // Parse comma-separated tags, stripping quotes
+  const tags = tagsContent
+    .split(",")
+    .map((t) => t.trim().replace(/^['"]|['"]$/g, "").trim())
+    .filter(Boolean)
+
+  if (tags.length === 0) return content
+
+  const yamlLines = tags.map((t) => `${indent}  - ${t}`)
+  const replacement = `${indent}tags:\n${yamlLines.join("\n")}`
+
+  return content.replace(inlineTagsRegex, replacement)
+}
+
+/**
+ * Smart-merge new index entries into existing index.md.
+ * - Each section heading (## xxx) is a group
+ * - New entries under each group are merged in, deduplicating by wikilink target
+ * - Existing entries are preserved
+ */
+function smartMergeIndex(existing: string, newContent: string): string {
+  if (!existing) return newContent
+  if (!newContent) return existing
+
+  // Parse existing index into sections
+  const sectionRegex = /^(##\s+.+)$/gm
+  const existingSections = new Map<string, string[]>()
+  let currentSection = "__head__"
+  let currentLines: string[] = []
+
+  for (const line of existing.split("\n")) {
+    if (/^##\s+/.test(line)) {
+      if (currentLines.length > 0) {
+        existingSections.set(currentSection, currentLines)
+      }
+      currentSection = line.trim()
+      currentLines = []
+    } else {
+      currentLines.push(line)
+    }
+  }
+  if (currentLines.length > 0) {
+    existingSections.set(currentSection, currentLines)
+  }
+
+  // Parse new index into sections
+  const newSections = new Map<string, string[]>()
+  currentSection = "__head__"
+  currentLines = []
+
+  for (const line of newContent.split("\n")) {
+    if (/^##\s+/.test(line)) {
+      if (currentLines.length > 0) {
+        newSections.set(currentSection, currentLines)
+      }
+      currentSection = line.trim()
+      currentLines = []
+    } else {
+      currentLines.push(line)
+    }
+  }
+  if (currentLines.length > 0) {
+    newSections.set(currentSection, currentLines)
+  }
+
+  // Extract wikilinks from a section's lines
+  const extractLinks = (lines: string[]): Set<string> => {
+    const links = new Set<string>()
+    const linkRegex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g
+    for (const line of lines) {
+      let match
+      while ((match = linkRegex.exec(line)) !== null) {
+        links.add(match[1].trim().toLowerCase())
+      }
+    }
+    return links
+  }
+
+  // Merge: for each section in new, append new entries to existing
+  const allSections = new Set([...existingSections.keys(), ...newSections.keys()])
+
+  // Build merged output
+  const mergedLines: string[] = []
+
+  for (const section of allSections) {
+    if (section === "__head__") {
+      // Head content (before any ## heading) — use new if available, else existing
+      const headLines = newSections.get("__head__") ?? existingSections.get("__head__") ?? []
+      mergedLines.push(...headLines.filter((l) => l.trim() !== ""))
+      continue
+    }
+
+    mergedLines.push("")
+    mergedLines.push(section)
+    mergedLines.push("")
+
+    const existingLines = existingSections.get(section) ?? []
+    const newLines = newSections.get(section) ?? []
+
+    // Get existing links
+    const existingLinks = extractLinks(existingLines)
+
+    // Add all existing entries
+    for (const line of existingLines) {
+      if (line.trim()) mergedLines.push(line)
+    }
+
+    // Add new entries that don't duplicate existing ones
+    for (const line of newLines) {
+      if (!line.trim()) continue
+      const newLinks = extractLinks([line])
+      const isDuplicate = [...newLinks].some((l) => existingLinks.has(l))
+      if (!isDuplicate) {
+        mergedLines.push(line)
+      }
+    }
+  }
+
+  return mergedLines.join("\n")
+}
+
 /**
  * Auto-ingest: reads source → LLM analyzes → LLM writes wiki pages, all in one go.
  * Used when importing new files.
@@ -149,15 +413,15 @@ export async function autoIngest(
 
   // Ensure source summary page exists (LLM may not have generated it correctly)
   const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
-  const sourceSummaryPath = `wiki/sources/${sourceBaseName}.md`
+  const sourceSummaryPath = `wiki/原始资料/${sourceBaseName}.md`
   const sourceSummaryFullPath = `${pp}/${sourceSummaryPath}`
-  const hasSourceSummary = writtenPaths.some((p) => p.startsWith("wiki/sources/"))
+  const hasSourceSummary = writtenPaths.some((p) => p.startsWith("wiki/原始资料/") || p.startsWith("wiki/sources/"))
 
   if (!hasSourceSummary) {
     const date = new Date().toISOString().slice(0, 10)
     const fallbackContent = [
       "---",
-      `type: source`,
+      `type: 原始资料`,
       `title: "Source: ${fileName}"`,
       `created: ${date}`,
       `updated: ${date}`,
@@ -243,14 +507,28 @@ async function writeFileBlocks(
   const matches = text.matchAll(FILE_BLOCK_REGEX)
 
   for (const match of matches) {
-    const relativePath = match[1].trim()
-    const content = match[2]
+    let relativePath = match[1].trim()
+    let content = match[2]
     if (!relativePath) continue
+
+    // ── Step 0: Path validation & sanitization ──
+    const frontmatterTitle = extractFrontmatterTitle(content)
+    const sanitizedPath = sanitizeWikiPath(relativePath, frontmatterTitle)
+    if (!sanitizedPath) {
+      console.log(`[Ingest] Rejected path (temp dir or invalid): ${relativePath}`)
+      continue
+    }
+    if (sanitizedPath !== relativePath) {
+      console.log(`[Ingest] Redirected path: ${relativePath} → ${sanitizedPath}`)
+      relativePath = sanitizedPath
+    }
+
+    // ── Step 1: Normalize tags in content ──
+    content = normalizeTags(content)
 
     const fullPath = `${projectPath}/${relativePath}`
 
-    // Skip duplicate files: check if a file with same "base name" already exists
-    // e.g. "中国长城 (000066).md" would be skipped if "中国长城.md" already exists
+    // ── Step 2: Skip duplicate files ──
     if (!relativePath.includes("log.md") && !relativePath.includes("index.md")) {
       const dir = fullPath.substring(0, fullPath.lastIndexOf("/"))
       const fileName = fullPath.substring(fullPath.lastIndexOf("/") + 1)
@@ -262,11 +540,17 @@ async function writeFileBlocks(
       }
     }
 
+    // ── Step 3: Write file (with smart merge for index.md) ──
     try {
       if (relativePath === "wiki/log.md" || relativePath.endsWith("/log.md")) {
         const existing = await tryReadFile(fullPath)
         const appended = existing ? `${existing}\n\n${content.trim()}` : content.trim()
         await writeFile(fullPath, appended)
+      } else if (relativePath === "wiki/index.md" || relativePath.endsWith("/index.md")) {
+        // Smart merge: preserve existing entries, add new ones without duplication
+        const existing = await tryReadFile(fullPath)
+        const merged = smartMergeIndex(existing, content)
+        await writeFile(fullPath, merged)
       } else {
         await writeFile(fullPath, content)
       }
@@ -438,38 +722,42 @@ function buildGenerationPrompt(schema: string, purpose: string, index: string, s
     "",
     "Output each wiki file in this exact format:",
     "",
-    "---FILE: wiki/sources/filename.md---",
+    "---FILE: wiki/子目录/文件名.md---",
     "(complete file content with YAML frontmatter)",
     "---END FILE---",
     "",
     "Generate:",
-    `1. A source summary page at **wiki/sources/${sourceBaseName}.md** (MUST use this exact path)`,
-    `2. Entity/concept/strategy/stock pages in the appropriate wiki subdirectory. Available directories: ${wikiDirs && wikiDirs.length > 0 ? wikiDirs.join(", ") : "wiki/entities/, wiki/concepts/"}.`,
+    `1. A source summary page at **wiki/原始资料/${sourceBaseName}.md** (MUST use this exact path)`,
+    `2. Entity/concept/strategy/stock pages in the appropriate wiki subdirectory. Available directories: ${wikiDirs && wikiDirs.length > 0 ? wikiDirs.join(", ") : "wiki/股票/, wiki/概念/"}.`,
     `   CRITICAL RULES:`,
     `   (a) You MUST use ONLY the directories listed above. Do NOT create any new directories.`,
     `   (b) If a Chinese directory exists for a page type (e.g. wiki/股票/, wiki/策略/, wiki/模式/), you MUST use the Chinese directory and NEVER use its English equivalent (e.g. wiki/stocks/, wiki/strategies/, wiki/patterns/).`,
-    `   (c) The frontmatter \`type\` field determines the directory. Map: 股票→wiki/股票/, 策略→wiki/策略/, 模式→wiki/模式/, 错误→wiki/错误/, 市场环境→wiki/市场环境/, 进化→wiki/进化/, 总结→wiki/总结/. If no matching dir exists, use the closest available one.`,
-    `   (d) Filenames inside subdirectories must be kebab-case, e.g. wiki/股票/沃格光电.md.`,
-    "4. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
-    "5. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
-    "6. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+    `   (c) The frontmatter \`type\` field determines the directory. Map: 股票→wiki/股票/, 策略→wiki/策略/, 模式→wiki/模式/, 错误→wiki/错误/, 市场环境→wiki/市场环境/, 进化→wiki/进化/, 总结→wiki/总结/, 预测→wiki/预测/. If no matching dir exists, use the closest available one.`,
+    `   (d) Filenames MUST be short descriptive names (max 30 Chinese chars or 50 ASCII chars), NEVER use the AI's own response text as the filename. Use the entity/concept/stock name, or a concise summary. Examples: 贵州茅台.md, 龙头首阴战法.md, 市场情绪周期.md — NOT "好的收到这份市场环境分析是对你职业生涯.md".`,
+    "3. An updated wiki/index.md — output the COMPLETE index with ALL entries (existing + new). New entries should be ADDED to the appropriate category section WITHOUT removing existing entries. The system will automatically deduplicate.",
+    "4. A log entry for wiki/log.md (just the new entry to append, format: ## YYYY-MM-DD | 类型 | 标题)",
+    "5. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
     "",
     "## Frontmatter Rules (CRITICAL)",
     "",
     "Every page MUST have YAML frontmatter with these fields:",
     "```yaml",
     "---",
-    "type: source | 股票 | 策略 | 模式 | 错误 | 市场环境 | 进化 | 总结 | 预测",
+    "type: 股票 | 策略 | 模式 | 错误 | 市场环境 | 进化 | 总结 | 预测 | 原始资料",
     "title: Human-readable title",
     "created: YYYY-MM-DD",
     "updated: YYYY-MM-DD",
-    "tags: []",
+    "tags:",
+    "  - 标签1",
+    "  - 标签2",
     "related: []",
     `sources: ["${sourceFileName}"]  # MUST contain the original source filename`,
     "confidence_grade: B  # A/B/C/D/E — see rules below",
     "confidence_reason: 基于2份来源的分析",
     "---",
     "```",
+    "",
+    `CRITICAL — Tags Format: tags MUST be in yaml multiline format (tags:\\n  - xxx\\n  - yyy). NEVER use inline format like tags: [xxx, yyy] or tags: ['xxx', 'yyy']. Even empty tags should be \`tags: []\`.`,
     "",
     `IMPORTANT: The exact \`type\` values MUST follow the Wiki Schema above. If the schema defines Chinese types (e.g. \`策略\`, \`股票\`, \`模式\`, \`错误\`, \`市场环境\`, \`进化\`, \`总结\`, \`预测\`), use those Chinese values. Do NOT use English types like \`entity\` or \`concept\` when Chinese equivalents are defined in the schema.`,
     `CRITICAL: The frontmatter \`type\` field must match the directory where the file is placed. For example, a file at \`wiki/股票/沃格光电.md\` must have \`type: 股票\`, NOT \`type: entity\` or \`type: 个股\`.`,
@@ -492,9 +780,10 @@ function buildGenerationPrompt(schema: string, purpose: string, index: string, s
     "",
     "Other rules:",
     "- Use [[wikilink]] syntax for cross-references between pages",
-    "- Use kebab-case filenames",
+    "- Use short descriptive filenames (NOT AI response text)",
     "- Follow the analysis recommendations on what to emphasize",
     "- If the analysis found connections to existing pages, add cross-references",
+    "- NEVER create temp directories like '更新核心页面/' or '临时/' — write directly to the target wiki/ directory",
     "",
     "## Review Items",
     "",
@@ -657,14 +946,14 @@ export async function executeIngestWrites(
     "",
     "Output each wiki file in this exact format:",
     "",
-    "---FILE: wiki/path/filename.md---",
+    "---FILE: wiki/子目录/文件名.md---",
     "(complete file content with YAML frontmatter)",
     "---END FILE---",
     "",
     "Generate:",
-    "1. A source summary page at wiki/sources/{filename}.md",
+    "1. A source summary page at wiki/原始资料/{filename}.md",
     "2. Entity/concept/strategy/stock pages in the appropriate wiki subdirectory",
-    "3. An updated wiki/index.md — add new entries, preserve existing ones",
+    "3. An updated wiki/index.md — output COMPLETE index with ALL entries (existing + new), system deduplicates",
     "4. A log entry for wiki/log.md",
     "5. An updated wiki/overview.md",
     "",
@@ -673,11 +962,13 @@ export async function executeIngestWrites(
     "Every page MUST have YAML frontmatter with these fields:",
     "```yaml",
     "---",
-    "type: source | 股票 | 策略 | 模式 | 错误 | 市场环境 | 进化 | 总结 | 预测",
+    "type: 股票 | 策略 | 模式 | 错误 | 市场环境 | 进化 | 总结 | 预测 | 原始资料",
     "title: Human-readable title",
     "created: YYYY-MM-DD",
     "updated: YYYY-MM-DD",
-    "tags: []",
+    "tags:",
+    "  - 标签1",
+    "  - 标签2",
     "related: []",
     "sources: []  # MUST contain the original source filename",
     "confidence_grade: B  # A/B/C/D/E",
@@ -685,9 +976,15 @@ export async function executeIngestWrites(
     "---",
     "```",
     "",
+    "CRITICAL — Tags Format: tags MUST be yaml multiline (tags:\\n  - xxx). NEVER use tags: [xxx, yyy].",
+    "",
+    "## Filename Rules",
+    "- Names MUST be short descriptive names, NEVER use AI response text as filename",
+    "- NEVER create temp directories like '更新核心页面/' or '临时/'",
+    "- Use Chinese directory names only (NOT English like wiki/stocks/)",
+    "",
     "Other rules:",
     "- Use [[wikilink]] syntax for cross-references between pages",
-    "- Use kebab-case filenames",
     "- Follow the analysis recommendations on what to emphasize",
     "",
     schema ? `## Wiki Schema\n${schema}` : "",

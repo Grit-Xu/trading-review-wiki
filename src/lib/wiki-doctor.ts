@@ -3,7 +3,7 @@ import { normalizePath } from "@/lib/path-utils"
 import { extractFrontmatterData } from "@/lib/frontmatter"
 
 export interface DoctorIssue {
-  type: "duplicate_index" | "duplicate_folder" | "loose_file" | "pinyin_name" | "link_format"
+  type: "duplicate_index" | "duplicate_folder" | "loose_file" | "pinyin_name" | "link_format" | "tag_format" | "empty_dir"
   severity: "auto" | "confirm" | "conflict"
   description: string
   details: string[]
@@ -15,6 +15,12 @@ export interface LinkFix {
   newLink: string
 }
 
+export interface TagFix {
+  filePath: string
+  oldFormat: string  // e.g. "tags: [a, b]" or "tags: []"
+  newFormat: string  // e.g. "tags:\n  - a\n  - b"
+}
+
 export interface DoctorPlan {
   autoOps: AutoOperation[]
   moves: FileMove[]
@@ -23,10 +29,11 @@ export interface DoctorPlan {
   pinyinFiles: PinyinFile[]
   linkFixes: LinkFix[]
   prefixFixes: LinkFix[]
+  tagFixes: TagFix[]
 }
 
 export interface AutoOperation {
-  type: "merge_index" | "delete_empty_dir" | "dedup_file" | "fix_link"
+  type: "merge_index" | "delete_empty_dir" | "dedup_file" | "fix_link" | "fix_tag"
   description: string
 }
 
@@ -225,7 +232,48 @@ export async function scanWiki(wikiPath: string): Promise<DoctorIssue[]> {
     }
   }
 
-  // 4. Check for loose .md files in root
+  // 5. Check for inconsistent tag formats (inline [x,y] vs yaml multiline)
+  const allMdFiles_scan: string[] = []
+  function collectAllMd(nodes: typeof rootFiles) {
+    for (const node of nodes) {
+      if (node.is_dir && node.children) collectAllMd(node.children)
+      else if (!node.is_dir && node.name.endsWith(".md")) allMdFiles_scan.push(node.path)
+    }
+  }
+  collectAllMd(rootFiles)
+
+  let inlineTagCount = 0
+  let emptyBracketCount = 0
+  const tagDetails: string[] = []
+  for (const filePath of allMdFiles_scan) {
+    try {
+      const content = await readFile(filePath)
+      // Detect inline tag format: tags: [xxx, yyy] or tags: ['xxx']
+      if (/^tags:\s*\[.+\]/m.test(content) && !/^tags:\s*\[\s*\]/m.test(content)) {
+        inlineTagCount++
+        if (tagDetails.length < 10) {
+          const match = content.match(/^tags:\s*\[.+\]/m)
+          tagDetails.push(`${filePath.split("/").slice(-2).join("/")} → ${match![0].trim()}`)
+        }
+      }
+      // Detect empty tags as brackets (fine, but count for reporting)
+      if (/^tags:\s*\[\s*\]/m.test(content)) {
+        emptyBracketCount++
+      }
+    } catch { /* ignore */ }
+  }
+  if (inlineTagCount > 0) {
+    issues.push({
+      type: "tag_format",
+      severity: "auto",
+      description: `${inlineTagCount} 个文件使用了 inline 标签格式 tags: [x, y]（应转为 yaml 多行）`,
+      details: tagDetails.length >= 10
+        ? [...tagDetails, `... 还有 ${inlineTagCount - 10} 个文件`]
+        : tagDetails,
+    })
+  }
+
+  // 6. Check for loose .md files in root
   const looseFiles = rootFiles.filter(
     (f) =>
       !f.is_dir &&
@@ -298,6 +346,7 @@ export async function generatePlan(
     pinyinFiles: [],
     linkFixes: [],
     prefixFixes: [],
+    tagFixes: [],
   }
 
   const rootFiles = await listDirectory(pp)
@@ -600,6 +649,54 @@ export async function generatePlan(
         })
       }
     }
+  }
+
+  // ── 4b. Tag format normalization ──
+  // Normalize inline tags: tags: [x, y] → tags:\n  - x\n  - y
+  const allMdForTags: { path: string; content: string }[] = []
+  function collectForTags(nodes: typeof rootFiles) {
+    for (const node of nodes) {
+      if (node.is_dir && node.children) collectForTags(node.children)
+      else if (!node.is_dir && node.name.endsWith(".md")) allMdForTags.push({ path: node.path, content: "" })
+    }
+  }
+  collectForTags(rootFiles)
+
+  let tagFixCount = 0
+  for (const mdFile of allMdForTags) {
+    try {
+      const content = await readFile(mdFile.path)
+      // Check for inline tags with content: tags: [xxx, yyy] (not empty brackets)
+      const inlineMatch = content.match(/^tags:\s*\[(.+)\]\s*$/m)
+      if (!inlineMatch || !inlineMatch[1].trim()) continue
+
+      const tagsContent = inlineMatch[1].trim()
+      const tags = tagsContent
+        .split(",")
+        .map((t) => t.trim().replace(/^['"]|['"]$/g, "").trim())
+        .filter(Boolean)
+
+      if (tags.length === 0) continue
+
+      // Build yaml multiline format
+      const indent = inlineMatch[0].match(/^(\s*)/)?.[1] ?? ""
+      const yamlLines = tags.map((t) => `${indent}  - ${t}`)
+      const newTags = `${indent}tags:\n${yamlLines.join("\n")}`
+
+      plan.tagFixes.push({
+        filePath: mdFile.path,
+        oldFormat: inlineMatch[0].trim(),
+        newFormat: newTags,
+      })
+      tagFixCount++
+    } catch { /* ignore */ }
+  }
+
+  if (tagFixCount > 0) {
+    plan.autoOps.push({
+      type: "fix_tag",
+      description: `统一 ${tagFixCount} 个文件的标签格式（inline → yaml 多行）`,
+    })
   }
 
   // ── 5. Link fixes ──
@@ -930,6 +1027,38 @@ export async function executePlan(
       operationsApplied++
     } catch (e) {
       errors.push(`移动失败 ${move.from} → ${finalTo}: ${e}`)
+    }
+  }
+
+  // Step 4b: Fix tag formats (inline → yaml multiline)
+  if (plan.tagFixes.length > 0) {
+    const fixesByFile = new Map<string, { oldFormat: string; newFormat: string }[]>()
+    for (const fix of plan.tagFixes) {
+      const list = fixesByFile.get(fix.filePath) ?? []
+      list.push({ oldFormat: fix.oldFormat, newFormat: fix.newFormat })
+      fixesByFile.set(fix.filePath, list)
+    }
+
+    for (const [filePath, fixes] of fixesByFile) {
+      const exists = await pathExists(filePath)
+      if (!exists) continue
+
+      try {
+        let content = await readFile(filePath)
+        let modified = false
+        for (const fix of fixes) {
+          if (content.includes(fix.oldFormat)) {
+            content = content.replace(fix.oldFormat, fix.newFormat)
+            modified = true
+          }
+        }
+        if (modified) {
+          await writeFile(filePath, content)
+          operationsApplied++
+        }
+      } catch (e) {
+        errors.push(`修复标签格式失败 ${filePath}: ${e}`)
+      }
     }
   }
 
