@@ -17,35 +17,57 @@ import { normalizePath } from "@/lib/path-utils"
 
 const NODE_TYPE_COLORS: Record<string, string> = {
   股票: "#ef4444",      // red-500 (bullish color in Chinese market)
+  stock: "#ef4444",
   策略: "#3b82f6",      // blue-500
+  strategy: "#3b82f6",
   模式: "#a855f7",      // purple-500
+  pattern: "#a855f7",
   错误: "#f59e0b",      // amber-500
+  mistake: "#f59e0b",
   市场环境: "#06b6d4",  // cyan-500
+  market: "#06b6d4",
   进化: "#22c55e",      // green-500
+  evolution: "#22c55e",
   总结: "#6366f1",      // indigo-500
+  summary: "#6366f1",
+  预测: "#ec4899",      // pink-500
+  prediction: "#ec4899",
   entity: "#ec4899",    // pink-500 — named entities (people, orgs, tools)
   concept: "#8b5cf6",   // violet-500 — ideas, techniques, frameworks
   comparison: "#f97316", // orange-500 — side-by-side analysis
   query: "#eab308",     // yellow-500 — open questions
   synthesis: "#14b8a6", // teal-500 — cross-cutting summaries
   source: "#94a3b8",    // slate-400
+  index: "#94a3b8",     // slate-400
+  overview: "#94a3b8",  // slate-400
   other: "#64748b",     // slate-500
 }
 
 const NODE_TYPE_LABELS: Record<string, string> = {
   股票: "个股",
+  stock: "个股",
   策略: "策略",
+  strategy: "策略",
   模式: "模式",
+  pattern: "模式",
   错误: "错误",
+  mistake: "错误",
   市场环境: "市场环境",
+  market: "市场环境",
   进化: "进化",
+  evolution: "进化",
   总结: "总结",
+  summary: "总结",
+  预测: "预测",
+  prediction: "预测",
   entity: "实体",
   concept: "概念",
   comparison: "对比",
   query: "问题",
   synthesis: "综合",
   source: "原始资料",
+  index: "索引",
+  overview: "概览",
   other: "其他",
 }
 

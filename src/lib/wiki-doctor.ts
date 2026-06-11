@@ -67,8 +67,23 @@ export interface DoctorResult {
 const FOLDER_MERGE_MAP: Record<string, string> = {
   stock: "股票",
   stocks: "股票",
+  strategy: "策略",
+  strategies: "策略",
+  pattern: "模式",
+  patterns: "模式",
+  mistake: "错误",
+  mistakes: "错误",
+  market: "市场环境",
+  "market-environment": "市场环境",
+  evolution: "进化",
+  prediction: "预测",
+  predictions: "预测",
   concepts: "概念",
   entities: "概念",
+  sources: "原始资料",
+  queries: "问题",
+  comparisons: "对比",
+  synthesis: "综合",
 }
 
 const DIR_TYPE_MAP: Record<string, string> = {
@@ -172,7 +187,45 @@ export async function scanWiki(wikiPath: string): Promise<DoctorIssue[]> {
     }
   }
 
-  // 3. Check for loose .md files in root
+  // 3. Check for empty orphaned English directories (counterpart Chinese dir exists)
+  const allEnglishDirs = [
+    "entities", "concepts", "sources", "queries", "comparisons", "synthesis",
+    "stock", "stocks", "strategy", "strategies", "pattern", "patterns",
+    "mistake", "mistakes", "market", "market-environment", "evolution",
+    "prediction", "predictions",
+  ]
+  for (const enDirName of allEnglishDirs) {
+    const cnName = FOLDER_MERGE_MAP[enDirName]
+    if (!cnName) continue
+    const hasEn = dirNames.includes(enDirName)
+    const hasCn = dirNames.includes(cnName)
+    if (hasEn && hasCn) {
+      const enDir = dirs.find((d) => d.name === enDirName)
+      const isEmpty = !enDir?.children || enDir.children.length === 0
+      if (isEmpty) {
+        issues.push({
+          type: "duplicate_folder",
+          severity: "auto",
+          description: `可清理的空英文目录：${enDirName}/（对应中文目录 ${cnName}/ 已存在）`,
+          details: [`${enDirName}/ 为空，可以安全删除`],
+        })
+      }
+    } else if (hasEn && !hasCn) {
+      // English dir exists alone — check if it's empty (orphaned)
+      const enDir = dirs.find((d) => d.name === enDirName)
+      const isEmpty = !enDir?.children || enDir.children.length === 0
+      if (isEmpty) {
+        issues.push({
+          type: "duplicate_folder",
+          severity: "auto",
+          description: `可清理的孤立空英文目录：${enDirName}/`,
+          details: [`${enDirName}/ 为空且无对应中文目录，可以安全删除`],
+        })
+      }
+    }
+  }
+
+  // 4. Check for loose .md files in root
   const looseFiles = rootFiles.filter(
     (f) =>
       !f.is_dir &&
@@ -384,6 +437,26 @@ export async function generatePlan(
     })
   }
 
+  // ── 2b. Clean up orphaned empty English directories (no Chinese counterpart)
+  for (const [en] of Object.entries(FOLDER_MERGE_MAP)) {
+    if (!dirNames.includes(en)) continue
+    const enDir = dirs.find((d) => d.name === en)
+    const isEmpty = !enDir?.children || enDir.children.length === 0
+    if (!isEmpty) continue
+    // Only delete if Chinese counterpart doesn't exist (if it does, covered by 2 above)
+    const cn = FOLDER_MERGE_MAP[en]
+    if (dirNames.includes(cn)) continue
+    plan.autoOps.push({
+      type: "delete_empty_dir",
+      description: `删除孤立空英文目录 ${en}/`,
+    })
+    plan.moves.push({
+      from: `${pp}/${en}`,
+      to: "__DELETE__",
+      reason: "孤立空英文目录，无中文对应目录",
+    })
+  }
+
   // ── 3. Loose files → typed dirs ──
   const looseFiles = rootFiles.filter(
     (f) =>
@@ -551,8 +624,23 @@ export async function generatePlan(
   const OLD_PREFIX_MAP: Record<string, string> = {
     stock: "股票",
     stocks: "股票",
+    strategy: "策略",
+    strategies: "策略",
+    pattern: "模式",
+    patterns: "模式",
+    mistake: "错误",
+    mistakes: "错误",
+    market: "市场环境",
+    "market-environment": "市场环境",
+    evolution: "进化",
+    prediction: "预测",
+    predictions: "预测",
     concepts: "概念",
     entities: "概念",
+    sources: "原始资料",
+    queries: "问题",
+    comparisons: "对比",
+    synthesis: "综合",
   }
 
   // Collect all .md file paths for scanning

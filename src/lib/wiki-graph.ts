@@ -145,7 +145,7 @@ function extractType(content: string): string {
   return "other"
 }
 
-// Subset of synonyms for graph type normalization
+// Subset of synonyms for graph type normalization (Chinese → English canonical)
 const TYPE_SYNONYMS_GRAPH: Record<string, string> = {
   "概念": "concept",
   "concepts": "concept",
@@ -159,6 +159,31 @@ const TYPE_SYNONYMS_GRAPH: Record<string, string> = {
   "原始资料": "source",
   "sources": "source",
   "概览": "overview",
+  // Trading-specific types
+  "股票": "stock",
+  "stock": "stock",
+  "stocks": "stock",
+  "策略": "strategy",
+  "strategy": "strategy",
+  "strategies": "strategy",
+  "模式": "pattern",
+  "pattern": "pattern",
+  "patterns": "pattern",
+  "错误": "mistake",
+  "mistake": "mistake",
+  "mistakes": "mistake",
+  "市场环境": "market",
+  "market": "market",
+  "market-environment": "market",
+  "进化": "evolution",
+  "evolution": "evolution",
+  "预测": "prediction",
+  "prediction": "prediction",
+  "predictions": "prediction",
+  "总结": "summary",
+  "summary": "summary",
+  "索引": "index",
+  "index": "index",
 }
 
 function extractWikilinks(content: string): string[] {

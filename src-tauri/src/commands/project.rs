@@ -14,15 +14,12 @@ pub fn create_project(name: String, path: String) -> Result<WikiProject, String>
     }
 
     // Create all required subdirectories
+    // Note: type-specific wiki subdirs are created by templates (e.g. wiki/股票/, wiki/策略/).
+    // We only create the base structure here to avoid English/Chinese directory duplication.
     let dirs = [
         "raw/sources",
         "raw/assets",
-        "wiki/entities",
-        "wiki/concepts",
-        "wiki/sources",
-        "wiki/queries",
-        "wiki/comparisons",
-        "wiki/synthesis",
+        "wiki",
     ];
     for dir in &dirs {
         fs::create_dir_all(root.join(dir))
@@ -39,20 +36,25 @@ pub fn create_project(name: String, path: String) -> Result<WikiProject, String>
 
 | Type | Directory | Purpose |
 |------|-----------|---------|
-| entity | wiki/entities/ | Named things (models, companies, people, datasets) |
-| concept | wiki/concepts/ | Ideas, techniques, phenomena |
-| source | wiki/sources/ | Papers, articles, talks, blog posts |
-| query | wiki/queries/ | Open questions under investigation |
-| comparison | wiki/comparisons/ | Side-by-side analysis of related entities |
-| synthesis | wiki/synthesis/ | Cross-cutting summaries and conclusions |
+| 股票 | wiki/股票/ | 个股分析页面 |
+| 策略 | wiki/策略/ | 交易策略 |
+| 模式 | wiki/模式/ | 市场模式与资金行为 |
+| 错误 | wiki/错误/ | 交易错误与教训 |
+| 市场环境 | wiki/市场环境/ | 市场环境分析 |
+| 进化 | wiki/进化/ | 交易能力跃迁记录 |
+| 预测 | wiki/预测/ | 预测与验证 |
+| 概念 | wiki/概念/ | 抽象概念与理论 |
+| 原始资料 | wiki/原始资料/ | 导入的外部资料 |
+| 问题 | wiki/问题/ | 待研究的问题 |
+| 对比 | wiki/对比/ | 对比分析 |
+| 综合 | wiki/综合/ | 跨主题综合总结 |
 
 ## Naming Conventions
 
-- Files: `kebab-case.md`
-- Entities: match official name where possible (e.g., `gpt-4.md`, `openai.md`)
-- Concepts: descriptive noun phrases (e.g., `chain-of-thought.md`)
-- Sources: `author-year-slug.md` (e.g., `wei-2022-chain-of-thought.md`)
-- Queries: question as slug (e.g., `does-scale-improve-reasoning.md`)
+- Files: `中文名称.md` or meaningful slugs
+- 个股: 使用股票名称 (e.g., `贵州茅台.md`)
+- 策略: 描述性命名 (e.g., `龙头首阴战法.md`)
+- 资料来源: `日期-来源-标题.md`
 
 ## Frontmatter
 
@@ -60,21 +62,13 @@ All pages must include YAML frontmatter:
 
 ```yaml
 ---
-type: entity | concept | source | query | comparison | synthesis | overview
+type: 股票 | 策略 | 模式 | 错误 | 市场环境 | 进化 | 预测 | 概念 | 原始资料 | 问题 | 对比 | 综合 | overview
 title: Human-readable title
 tags: []
 related: []
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 ---
-```
-
-Source pages also include:
-```yaml
-authors: []
-year: YYYY
-url: ""
-venue: ""
 ```
 
 ## Index Format
@@ -147,17 +141,29 @@ When sources contradict each other:
     // wiki/index.md
     let index_content = r#"# Wiki Index
 
-## Entities
+## 股票
 
-## Concepts
+## 策略
 
-## Sources
+## 模式
 
-## Queries
+## 错误
 
-## Comparisons
+## 市场环境
 
-## Synthesis
+## 进化
+
+## 预测
+
+## 概念
+
+## 原始资料
+
+## 问题
+
+## 对比
+
+## 综合
 "#;
     write_file_inner(root.join("wiki/index.md"), index_content)?;
 

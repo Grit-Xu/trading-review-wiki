@@ -364,10 +364,8 @@ const TYPE_SYNONYMS: Record<string, string> = {
   "synthesis": "综合",
   "overview": "概览",
   "index": "索引",
-  // Additional English variants seen in screenshots
-  "concept": "概念",
-  "query": "问题",
-  "source": "原始资料",
+  "prediction": "预测",
+  "predictions": "预测",
   // Chinese aliases (different spellings of same thing)
   "错误总结": "错误",
   "市场总结": "市场环境",
